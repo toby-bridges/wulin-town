@@ -18,7 +18,7 @@ import PoweredByConvex from './components/PoweredByConvex.tsx';
 
 // 配置信息
 const CONFIG = {
-  githubUrl: 'https://github.com/YOUR_USERNAME/wulin-town', // TODO: 替换为你的 GitHub 地址
+  githubUrl: 'https://github.com/toby-bridges/wulin-town',
   personalSite: 'https://vibeathon-100.vercel.app/',
   twitter: 'https://x.com/lijiuer92',
 };
