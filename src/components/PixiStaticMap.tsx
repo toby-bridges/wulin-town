@@ -8,62 +8,37 @@ import * as gentlesplash from '../../data/animations/gentlesplash.json';
 import * as windmill from '../../data/animations/windmill.json';
 
 const animations = {
-  'campfire.json': { spritesheet: campfire, url: '/ai-town/assets/spritesheets/campfire.png' },
+  'campfire.json': { spritesheet: campfire, url: '/wulin-town/assets/spritesheets/campfire.png' },
   'gentlesparkle.json': {
     spritesheet: gentlesparkle,
-    url: '/ai-town/assets/spritesheets/gentlesparkle32.png',
+    url: '/wulin-town/assets/spritesheets/gentlesparkle32.png',
   },
   'gentlewaterfall.json': {
     spritesheet: gentlewaterfall,
-    url: '/ai-town/assets/spritesheets/gentlewaterfall32.png',
+    url: '/wulin-town/assets/spritesheets/gentlewaterfall32.png',
   },
-  'windmill.json': { spritesheet: windmill, url: '/ai-town/assets/spritesheets/windmill.png' },
+  'windmill.json': { spritesheet: windmill, url: '/wulin-town/assets/spritesheets/windmill.png' },
   'gentlesplash.json': { spritesheet: gentlesplash,
-    url: '/ai-town/assets/spritesheets/gentlewaterfall32.png',},
+    url: '/wulin-town/assets/spritesheets/gentlewaterfall32.png',},
 };
 
 export const PixiStaticMap = PixiComponent('StaticMap', {
   create: (props: { map: WorldMap; [k: string]: any }) => {
     const map = props.map;
-    const numxtiles = Math.floor(map.tileSetDimX / map.tileDim);
-    const numytiles = Math.floor(map.tileSetDimY / map.tileDim);
-    const bt = PIXI.BaseTexture.from(map.tileSetUrl, {
+    const container = new PIXI.Container();
+
+    // 直接加载完整地图图片作为背景
+    const mapTexture = PIXI.Texture.from(map.tileSetUrl, {
       scaleMode: PIXI.SCALE_MODES.NEAREST,
     });
+    const mapSprite = new PIXI.Sprite(mapTexture);
+    mapSprite.x = 0;
+    mapSprite.y = 0;
+    container.addChild(mapSprite);
 
-    const tiles = [];
-    for (let x = 0; x < numxtiles; x++) {
-      for (let y = 0; y < numytiles; y++) {
-        tiles[x + y * numxtiles] = new PIXI.Texture(
-          bt,
-          new PIXI.Rectangle(x * map.tileDim, y * map.tileDim, map.tileDim, map.tileDim),
-        );
-      }
-    }
-    const screenxtiles = map.bgTiles[0].length;
-    const screenytiles = map.bgTiles[0][0].length;
-
-    const container = new PIXI.Container();
-    const allLayers = [...map.bgTiles, ...map.objectTiles];
-
-    // blit bg & object layers of map onto canvas
-    for (let i = 0; i < screenxtiles * screenytiles; i++) {
-      const x = i % screenxtiles;
-      const y = Math.floor(i / screenxtiles);
-      const xPx = x * map.tileDim;
-      const yPx = y * map.tileDim;
-
-      // Add all layers of backgrounds.
-      for (const layer of allLayers) {
-        const tileIndex = layer[x][y];
-        // Some layers may not have tiles at this location.
-        if (tileIndex === -1) continue;
-        const ctile = new PIXI.Sprite(tiles[tileIndex]);
-        ctile.x = xPx;
-        ctile.y = yPx;
-        container.addChild(ctile);
-      }
-    }
+    // 计算地图尺寸（使用图片原始尺寸）
+    const screenxtiles = map.bgTiles[0]?.length || Math.ceil(map.tileSetDimX / map.tileDim);
+    const screenytiles = map.bgTiles[0]?.[0]?.length || Math.ceil(map.tileSetDimY / map.tileDim);
 
     // TODO: Add layers.
     const spritesBySheet = new Map<string, AnimatedSprite[]>();

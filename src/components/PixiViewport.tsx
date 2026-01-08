@@ -26,22 +26,37 @@ export default PixiComponent('Viewport', {
       events: app.renderer.events,
       passiveWheel: false,
       ...viewportProps,
-    });
+    } as any);
     if (viewportRef) {
       viewportRef.current = viewport;
     }
     // Activate plugins
+    const minScale = Math.max(
+      0.3,
+      Math.min(props.screenWidth / props.worldWidth, props.screenHeight / props.worldHeight)
+    );
     viewport
       .drag()
       .pinch({})
-      .wheel()
+      .wheel({ smooth: 3 })
       .decelerate()
       .clamp({ direction: 'all', underflow: 'center' })
-      .setZoom(-10)
       .clampZoom({
-        minScale: (1.04 * props.screenWidth) / (props.worldWidth / 2),
-        maxScale: 3.0,
+        minScale: minScale,
+        maxScale: 4.0,
       });
+    // 设置初始缩放
+    viewport.setZoom(minScale * 1.5);
+
+    // 挂载 update 到 ticker，让动画和平滑缩放生效
+    const updateFn = () => viewport.update(app.ticker.deltaMS);
+    app.ticker.add(updateFn);
+
+    // 监听销毁事件来清理 ticker
+    viewport.on('destroyed', () => {
+      app.ticker.remove(updateFn);
+    });
+
     return viewport;
   },
   applyProps(viewport, oldProps: any, newProps: any) {

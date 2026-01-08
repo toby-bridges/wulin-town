@@ -11,8 +11,18 @@ export default function MusicButton() {
 
   useEffect(() => {
     if (musicUrl) {
+      // Remove existing sound before adding new one to prevent duplicate registration
+      if (sound.exists('background')) {
+        sound.remove('background');
+      }
       sound.add('background', musicUrl).loop = true;
     }
+    return () => {
+      // Cleanup on unmount
+      if (sound.exists('background')) {
+        sound.stop('background');
+      }
+    };
   }, [musicUrl]);
 
   const flipSwitch = async () => {
@@ -43,10 +53,9 @@ export default function MusicButton() {
       <Button
         onClick={() => void flipSwitch()}
         className="hidden lg:block"
-        title="Play AI generated music (press m to play/mute)"
         imgUrl={volumeImg}
       >
-        {isPlaying ? 'Mute' : 'Music'}
+        {isPlaying ? '静音' : '音乐'}
       </Button>
     </>
   );

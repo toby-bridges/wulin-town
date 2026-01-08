@@ -3,8 +3,22 @@
 const OPENAI_EMBEDDING_DIMENSION = 1536;
 const TOGETHER_EMBEDDING_DIMENSION = 768;
 const OLLAMA_EMBEDDING_DIMENSION = 1024;
+const JINA_EMBEDDING_DIMENSION = 1024; // Jina embedding dimension
 
-export const EMBEDDING_DIMENSION: number = OLLAMA_EMBEDDING_DIMENSION;
+export const EMBEDDING_DIMENSION: number = JINA_EMBEDDING_DIMENSION;
+
+// Jina Embedding API configuration
+function getJinaEmbeddingConfig() {
+  const apiKey = process.env.JINA_API_KEY;
+  if (!apiKey) {
+    return null;
+  }
+  return {
+    url: 'https://api.jina.ai/v1/embeddings',
+    model: 'jina-embeddings-v3',
+    apiKey,
+  };
+}
 
 export function detectMismatchedLLMProvider() {
   switch (EMBEDDING_DIMENSION) {
@@ -203,6 +217,49 @@ export async function tryPullOllama(model: string, error: string) {
 }
 
 export async function fetchEmbeddingBatch(texts: string[]) {
+  // First try Jina embedding API (independent from chat LLM)
+  const jinaConfig = getJinaEmbeddingConfig();
+  if (jinaConfig) {
+    const {
+      result: json,
+      retries,
+      ms,
+    } = await retryWithBackoff(async () => {
+      const result = await fetch(jinaConfig.url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + jinaConfig.apiKey,
+        },
+        body: JSON.stringify({
+          model: jinaConfig.model,
+          input: texts.map((text) => text.replace(/\n/g, ' ')),
+        }),
+      });
+      if (!result.ok) {
+        throw {
+          retry: result.status === 429 || result.status >= 500,
+          error: new Error(`Jina Embedding failed with code ${result.status}: ${await result.text()}`),
+        };
+      }
+      return (await result.json()) as CreateEmbeddingResponse;
+    });
+    if (json.data.length !== texts.length) {
+      console.error(json);
+      throw new Error('Unexpected number of embeddings');
+    }
+    const allembeddings = json.data;
+    allembeddings.sort((a, b) => a.index - b.index);
+    return {
+      ollama: false as const,
+      embeddings: allembeddings.map(({ embedding }) => embedding),
+      usage: json.usage?.total_tokens,
+      retries,
+      ms,
+    };
+  }
+
+  // Fallback to LLM config embedding
   const config = getLLMConfig();
   if (config.provider === 'ollama') {
     return {

@@ -33,7 +33,7 @@ export const getBackgroundMusic = query({
       .order('desc')
       .first();
     if (!music) {
-      return '/ai-town/assets/background.mp3';
+      return '/wulin-town/assets/background.mp3';
     }
     const url = await ctx.storage.getUrl(music.storageId);
     if (!url) {
@@ -100,7 +100,7 @@ enum MusicGenFormat {
 export async function generateMusic(
   prompt: string,
   duration: number,
-  webhook: string = process.env.CONVEX_SITE_URL + '/replicate_webhook' || '',
+  webhook: string = process.env.CONVEX_SITE_URL ? `${process.env.CONVEX_SITE_URL}/replicate_webhook` : '',
   webhook_events_filter: [WebhookEventType] = ['completed'],
   normalization_strategy: MusicGenNormStrategy = MusicGenNormStrategy.Peak,
   output_format: MusicGenFormat = MusicGenFormat.mp3,

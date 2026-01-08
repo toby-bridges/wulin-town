@@ -4,6 +4,7 @@ export default function PoweredByConvex() {
     <a
       href="https://convex.dev/c/ai-town"
       target="_blank"
+      rel="noopener noreferrer"
       className="group absolute top-0 left-0 w-64 h-64 md:block z-10 hidden shape-top-left-corner overflow-hidden"
       aria-label="Powered by Convex"
     >

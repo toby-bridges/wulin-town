@@ -97,13 +97,13 @@ export const restartDeadWorlds = internalMutation({
 export const userStatus = query({
   args: {
     worldId: v.id('worlds'),
+    visitorId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    // const identity = await ctx.auth.getUserIdentity();
-    // if (!identity) {
-    //   return null;
-    // }
-    // return identity.tokenIdentifier;
+    // If visitorId is provided, use it; otherwise fall back to DEFAULT_NAME
+    if (args.visitorId) {
+      return args.visitorId;
+    }
     return DEFAULT_NAME;
   },
 });
@@ -111,30 +111,30 @@ export const userStatus = query({
 export const joinWorld = mutation({
   args: {
     worldId: v.id('worlds'),
+    visitorId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    // const identity = await ctx.auth.getUserIdentity();
-    // if (!identity) {
-    //   throw new ConvexError(`Not logged in`);
-    // }
-    // const name =
-    //   identity.givenName || identity.nickname || (identity.email && identity.email.split('@')[0]);
-    const name = DEFAULT_NAME;
+    const tokenIdentifier = args.visitorId || DEFAULT_NAME;
+    // Generate a friendly display name from visitor ID
+    const shortId = tokenIdentifier.split('_').pop()?.substring(0, 4) || 'guest';
+    const name = args.visitorId ? `访客${shortId.toUpperCase()}` : DEFAULT_NAME;
 
-    // if (!name) {
-    //   throw new ConvexError(`Missing name on ${JSON.stringify(identity)}`);
-    // }
     const world = await ctx.db.get(args.worldId);
     if (!world) {
       throw new ConvexError(`Invalid world ID: ${args.worldId}`);
     }
-    // const { tokenIdentifier } = identity;
+
+    // Check if this visitor is already in the game
+    const existingPlayer = world.players.find((p) => p.human === tokenIdentifier);
+    if (existingPlayer) {
+      throw new ConvexError(`你已经在游戏中了`);
+    }
+
     return await insertInput(ctx, world._id, 'join', {
       name,
       character: characters[Math.floor(Math.random() * characters.length)].name,
-      description: `${DEFAULT_NAME} is a human player`,
-      // description: `${identity.givenName} is a human player`,
-      tokenIdentifier: DEFAULT_NAME,
+      description: `${name} 是一位来到同福客栈的访客`,
+      tokenIdentifier,
     });
   },
 });
@@ -142,19 +142,15 @@ export const joinWorld = mutation({
 export const leaveWorld = mutation({
   args: {
     worldId: v.id('worlds'),
+    visitorId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    // const identity = await ctx.auth.getUserIdentity();
-    // if (!identity) {
-    //   throw new Error(`Not logged in`);
-    // }
-    // const { tokenIdentifier } = identity;
+    const tokenIdentifier = args.visitorId || DEFAULT_NAME;
     const world = await ctx.db.get(args.worldId);
     if (!world) {
       throw new Error(`Invalid world ID: ${args.worldId}`);
     }
-    // const existingPlayer = world.players.find((p) => p.human === tokenIdentifier);
-    const existingPlayer = world.players.find((p) => p.human === DEFAULT_NAME);
+    const existingPlayer = world.players.find((p) => p.human === tokenIdentifier);
     if (!existingPlayer) {
       return;
     }

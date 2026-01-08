@@ -11,7 +11,7 @@ services:
     environment:
       - VITE_CONVEX_URL=http://127.0.0.1:${PORT:-3210}
     networks:
-      - ai-town-network
+      - wulin-town-network
   backend:
     image: ghcr.io/get-convex/convex-backend:latest
     ports:
@@ -33,7 +33,7 @@ services:
       interval: 5s
       start_period: 5s
     networks:
-      - ai-town-network
+      - wulin-town-network
 
   dashboard:
     image: ghcr.io/get-convex/convex-dashboard:latest
@@ -49,5 +49,5 @@ volumes:
   data:
 
 networks:
-  ai-town-network:
+  wulin-town-network:
     driver: bridge

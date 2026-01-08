@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from 'convex/react';
 import { api } from '../../convex/_generated/api';
 import Button from './buttons/Button';
+import starImg from '../../assets/star.svg';
 
 export default function FreezeButton() {
   const stopAllowed = useQuery(api.testing.stopAllowed) ?? false;
@@ -26,10 +27,9 @@ export default function FreezeButton() {
       <Button
         onClick={flipSwitch}
         className="hidden lg:block"
-        title="When freezing a world, the agents will take some time to stop what they are doing before they become frozen. "
-        imgUrl="/assets/star.svg"
+        imgUrl={starImg}
       >
-        {frozen ? 'Unfreeze' : 'Freeze'}
+        {frozen ? '继续' : '暂停'}
       </Button>
     </>
   );

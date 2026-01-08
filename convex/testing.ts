@@ -111,6 +111,28 @@ export const archive = internalMutation({
   },
 });
 
+// 重置世界（归档旧世界，以便 init 创建新世界）
+export const resetWorld = mutation({
+  handler: async (ctx) => {
+    const worldStatus = await ctx.db
+      .query('worldStatus')
+      .filter((q) => q.eq(q.field('isDefault'), true))
+      .first();
+    if (!worldStatus) {
+      console.log('No default world found, nothing to reset');
+      return;
+    }
+    const engine = await ctx.db.get(worldStatus.engineId);
+    if (engine?.running) {
+      console.log('Stopping engine first...');
+      await stopEngine(ctx, worldStatus.worldId);
+    }
+    console.log(`Archiving world ${worldStatus.worldId}...`);
+    await ctx.db.patch(worldStatus._id, { isDefault: false });
+    console.log('World archived. Run "npx convex run init" to create a new world.');
+  },
+});
+
 async function getDefaultWorld(db: DatabaseReader) {
   const worldStatus = await db
     .query('worldStatus')

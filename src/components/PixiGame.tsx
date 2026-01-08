@@ -1,7 +1,7 @@
 import * as PIXI from 'pixi.js';
 import { useApp } from '@pixi/react';
 import { Player, SelectElement } from './Player.tsx';
-import { useEffect, useRef, useState } from 'react';
+import { MutableRefObject, useEffect, useState } from 'react';
 import { PixiStaticMap } from './PixiStaticMap.tsx';
 import PixiViewport from './PixiViewport.tsx';
 import { Viewport } from 'pixi-viewport';
@@ -14,6 +14,8 @@ import { DebugPath } from './DebugPath.tsx';
 import { PositionIndicator } from './PositionIndicator.tsx';
 import { SHOW_DEBUG_UI } from './Game.tsx';
 import { ServerGame } from '../hooks/serverGame.ts';
+import { useVisitorId } from '../hooks/useVisitorId.ts';
+import { useRef } from 'react';
 
 export const PixiGame = (props: {
   worldId: Id<'worlds'>;
@@ -23,12 +25,18 @@ export const PixiGame = (props: {
   width: number;
   height: number;
   setSelectedElement: SelectElement;
+  viewportRef?: MutableRefObject<Viewport | undefined>;
 }) => {
   // PIXI setup.
   const pixiApp = useApp();
-  const viewportRef = useRef<Viewport | undefined>();
+  const internalViewportRef = useRef<Viewport | undefined>();
+  const viewportRef = props.viewportRef || internalViewportRef;
 
-  const humanTokenIdentifier = useQuery(api.world.userStatus, { worldId: props.worldId }) ?? null;
+  const visitorId = useVisitorId();
+  const humanTokenIdentifier = useQuery(
+    api.world.userStatus,
+    visitorId ? { worldId: props.worldId, visitorId } : 'skip',
+  ) ?? null;
   const humanPlayerId = [...props.game.world.players.values()].find(
     (p) => p.human === humanTokenIdentifier,
   )?.id;
@@ -36,10 +44,11 @@ export const PixiGame = (props: {
   const moveTo = useSendInput(props.engineId, 'moveTo');
 
   // Interaction for clicking on the world to navigate.
-  const dragStart = useRef<{ screenX: number; screenY: number } | null>(null);
-  const onMapPointerDown = (e: any) => {
-    // https://pixijs.download/dev/docs/PIXI.FederatedPointerEvent.html
-    dragStart.current = { screenX: e.screenX, screenY: e.screenY };
+  // Use global coordinates (relative to canvas) instead of screenX/Y to avoid offset issues
+  const dragStart = useRef<{ x: number; y: number } | null>(null);
+  const onMapPointerDown = (e: PIXI.FederatedPointerEvent) => {
+    // Use global coordinates which are relative to the canvas
+    dragStart.current = { x: e.global.x, y: e.global.y };
   };
 
   const [lastDestination, setLastDestination] = useState<{
@@ -47,11 +56,11 @@ export const PixiGame = (props: {
     y: number;
     t: number;
   } | null>(null);
-  const onMapPointerUp = async (e: any) => {
+  const onMapPointerUp = async (e: PIXI.FederatedPointerEvent) => {
     if (dragStart.current) {
-      const { screenX, screenY } = dragStart.current;
+      const { x, y } = dragStart.current;
       dragStart.current = null;
-      const [dx, dy] = [screenX - e.screenX, screenY - e.screenY];
+      const [dx, dy] = [x - e.global.x, y - e.global.y];
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist > 10) {
         console.log(`Skipping navigation on drag event (${dist}px)`);
@@ -65,7 +74,8 @@ export const PixiGame = (props: {
     if (!viewport) {
       return;
     }
-    const gameSpacePx = viewport.toWorld(e.screenX, e.screenY);
+    // Use global coordinates for accurate world position calculation
+    const gameSpacePx = viewport.toWorld(e.global.x, e.global.y);
     const tileDim = props.game.worldMap.tileDim;
     const gameSpaceTiles = {
       x: gameSpacePx.x / tileDim,
@@ -79,7 +89,7 @@ export const PixiGame = (props: {
     console.log(`Moving to ${JSON.stringify(roundedTiles)}`);
     await toastOnError(moveTo({ playerId: humanPlayerId, destination: roundedTiles }));
   };
-  const { width, height, tileDim } = props.game.worldMap;
+  const { width, height, tileDim, tileSetDimX, tileSetDimY } = props.game.worldMap;
   const players = [...props.game.world.players.values()];
 
   // Zoom on the user’s avatar when it is created
@@ -93,13 +103,17 @@ export const PixiGame = (props: {
     });
   }, [humanPlayerId]);
 
+  // 使用图片实际尺寸作为世界尺寸，避免左侧空白
+  const worldWidth = tileSetDimX || width * tileDim;
+  const worldHeight = tileSetDimY || height * tileDim;
+
   return (
     <PixiViewport
       app={pixiApp}
       screenWidth={props.width}
       screenHeight={props.height}
-      worldWidth={width * tileDim}
-      worldHeight={height * tileDim}
+      worldWidth={worldWidth}
+      worldHeight={worldHeight}
       viewportRef={viewportRef}
     >
       <PixiStaticMap

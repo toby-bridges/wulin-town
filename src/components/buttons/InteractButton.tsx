@@ -3,19 +3,22 @@ import { toast } from 'react-toastify';
 import interactImg from '../../../assets/interact.svg';
 import { useConvex, useMutation, useQuery } from 'convex/react';
 import { api } from '../../../convex/_generated/api';
-// import { SignInButton } from '@clerk/clerk-react';
 import { ConvexError } from 'convex/values';
 import { Id } from '../../../convex/_generated/dataModel';
 import { useCallback } from 'react';
 import { waitForInput } from '../../hooks/sendInput';
 import { useServerGame } from '../../hooks/serverGame';
+import { useVisitorId } from '../../hooks/useVisitorId';
 
 export default function InteractButton() {
-  // const { isAuthenticated } = useConvexAuth();
   const worldStatus = useQuery(api.world.defaultWorldStatus);
   const worldId = worldStatus?.worldId;
   const game = useServerGame(worldId);
-  const humanTokenIdentifier = useQuery(api.world.userStatus, worldId ? { worldId } : 'skip');
+  const visitorId = useVisitorId();
+  const humanTokenIdentifier = useQuery(
+    api.world.userStatus,
+    worldId && visitorId ? { worldId, visitorId } : 'skip',
+  );
   const userPlayerId =
     game && [...game.world.players.values()].find((p) => p.human === humanTokenIdentifier)?.id;
   const join = useMutation(api.world.joinWorld);
@@ -24,10 +27,10 @@ export default function InteractButton() {
 
   const convex = useConvex();
   const joinInput = useCallback(
-    async (worldId: Id<'worlds'>) => {
+    async (worldId: Id<'worlds'>, visitorId: string) => {
       let inputId;
       try {
-        inputId = await join({ worldId });
+        inputId = await join({ worldId, visitorId });
       } catch (e: any) {
         if (e instanceof ConvexError) {
           toast.error(e.data);
@@ -41,35 +44,25 @@ export default function InteractButton() {
         toast.error(e.message);
       }
     },
-    [convex],
+    [convex, join],
   );
 
   const joinOrLeaveGame = () => {
-    if (
-      !worldId ||
-      // || !isAuthenticated
-      game === undefined
-    ) {
+    if (!worldId || !visitorId || game === undefined) {
       return;
     }
     if (isPlaying) {
       console.log(`Leaving game for player ${userPlayerId}`);
-      void leave({ worldId });
+      void leave({ worldId, visitorId });
     } else {
-      console.log(`Joining game`);
-      void joinInput(worldId);
+      console.log(`Joining game as ${visitorId}`);
+      void joinInput(worldId, visitorId);
     }
   };
-  // if (!isAuthenticated || game === undefined) {
-  //   return (
-  //     <SignInButton>
-  //       <Button imgUrl={interactImg}>Interact</Button>
-  //     </SignInButton>
-  //   );
-  // }
+
   return (
     <Button imgUrl={interactImg} onClick={joinOrLeaveGame}>
-      {isPlaying ? 'Leave' : 'Interact'}
+      {isPlaying ? '离开' : '互动'}
     </Button>
   );
 }
