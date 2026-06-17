@@ -59,6 +59,19 @@ export const kick = internalMutation({
   },
 });
 
+// One-shot repair: resets processedInputNumber on the default world's engine
+// to a specified value so the engine stops skipping inputs. Use when
+// processedInputNumber is ahead of the actual input sequence (e.g. after
+// a botched engine migration that carried over a stale cursor).
+export const resetInputCursor = mutation({
+  args: { processedInputNumber: v.number() },
+  handler: async (ctx, args) => {
+    const { engine } = await getDefaultWorld(ctx.db);
+    await ctx.db.patch(engine._id, { processedInputNumber: args.processedInputNumber });
+    console.log(`Reset processedInputNumber to ${args.processedInputNumber} for engine ${engine._id}`);
+  },
+});
+
 export const stopAllowed = query({
   handler: async () => {
     return !process.env.STOP_NOT_ALLOWED;

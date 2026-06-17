@@ -42,3 +42,9 @@ dist
 
 convex-local*
 convex_local*
+
+# Claude Code session files (worktrees, memory, plans)
+.claude/
+
+# Snapshot/debug files
+SNAPSHOT.md

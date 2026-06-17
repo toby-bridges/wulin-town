@@ -168,7 +168,16 @@ export async function chatCompletion(
         ...AuthHeaders(),
       },
 
-      body: JSON.stringify(body),
+      // DeepSeek V4 models are reasoning-by-default: output goes to
+      // reasoning_content and `content` comes back empty, which breaks every
+      // caller here (especially max_tokens:1 importance scoring). Disabling
+      // thinking makes content return directly. Only inject for DeepSeek —
+      // other OpenAI-compatible providers reject unrecognised properties.
+      body: JSON.stringify(
+        config.provider === 'custom' && config.url.includes('deepseek')
+          ? { ...body, thinking: { type: 'disabled' } }
+          : body,
+      ),
     });
     if (!result.ok) {
       const error = await result.text();

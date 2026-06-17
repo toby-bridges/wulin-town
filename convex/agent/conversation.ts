@@ -7,6 +7,12 @@ import { api, internal } from '../_generated/api';
 import * as embeddingsCache from './embeddingsCache';
 import { GameId, conversationId, playerId } from '../aiTown/ids';
 import { NUM_MEMORIES_TO_SEARCH } from '../constants';
+import {
+  everosEnabled,
+  searchPersonalMemory,
+  characterUserId,
+  episodesToPromptLines,
+} from '../util/everos';
 
 const selfInternal = internal.agent.conversation;
 
@@ -47,6 +53,7 @@ export async function startConversationMessage(
   prompt.push(...agentPrompts(otherPlayer, agent, otherAgent ?? null));
   prompt.push(...previousConversationPrompt(otherPlayer, lastConversation));
   prompt.push(...relatedMemoriesPrompt(memories));
+  prompt.push(...(await everosMemoryPrompt(player.name, `和${otherPlayer.name}有关的事`)));
   if (memoryWithOtherPlayer) {
     prompt.push(
       `Be sure to include some detail or question about a previous conversation in your greeting.`,
@@ -104,6 +111,7 @@ export async function continueConversationMessage(
   ];
   prompt.push(...agentPrompts(otherPlayer, agent, otherAgent ?? null));
   prompt.push(...relatedMemoriesPrompt(memories));
+  prompt.push(...(await everosMemoryPrompt(player.name, `我对${otherPlayer.name}的看法`)));
   prompt.push(
     `Below is the current chat history between you and ${otherPlayer.name}.`,
     `DO NOT greet them again. Do NOT use the word "Hey" too often. Your response should be brief and within 200 characters.`,
@@ -180,6 +188,25 @@ export async function leaveConversationMessage(
     stop: stopWords(otherPlayer.name, player.name),
   });
   return trimContentPrefx(content, lastPrompt);
+}
+
+// Pull this character's long-term memory from EverOS and render it as prompt
+// lines. Fail-soft: returns [] when EverOS is disabled or errors.
+async function everosMemoryPrompt(playerName: string, query: string): Promise<string[]> {
+  if (!everosEnabled()) {
+    return [];
+  }
+  try {
+    const episodes = await searchPersonalMemory(characterUserId(playerName), query, 5);
+    const lines = episodesToPromptLines(episodes);
+    if (!lines.length) {
+      return [];
+    }
+    return [`这是你（${playerName}）记得的相关往事，按相关度排序：`, ...lines];
+  } catch (e) {
+    console.error('everosMemoryPrompt failed:', e);
+    return [];
+  }
 }
 
 function agentPrompts(

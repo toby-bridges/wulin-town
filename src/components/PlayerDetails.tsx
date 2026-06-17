@@ -4,6 +4,7 @@ import { Id } from '../../convex/_generated/dataModel';
 import closeImg from '../../assets/close.svg';
 import { SelectElement } from './Player';
 import { Messages } from './Messages';
+import CharacterState from './CharacterState';
 import { toastOnError } from '../toasts';
 import { useSendInput } from '../hooks/sendInput';
 import { Player } from '../../convex/aiTown/player';
@@ -258,6 +259,7 @@ export default function PlayerDetails({
           />
         </>
       )}
+      {!isMe && <CharacterState worldId={worldId} game={game} playerId={playerId} />}
     </>
   );
 }

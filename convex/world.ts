@@ -64,6 +64,14 @@ export const stopInactiveWorlds = internalMutation({
       if (cutoff < worldStatus.lastViewed || worldStatus.status !== 'running') {
         continue;
       }
+      const engine = await ctx.db.get(worldStatus.engineId);
+      // Reconcile a stale 'running' status whose engine has already stopped:
+      // just mark it inactive without trying to stop a non-running engine.
+      if (engine && !engine.running) {
+        console.log(`Marking world ${worldStatus._id} inactive (engine already stopped)`);
+        await ctx.db.patch(worldStatus._id, { status: 'inactive' });
+        continue;
+      }
       console.log(`Stopping inactive world ${worldStatus._id}`);
       await ctx.db.patch(worldStatus._id, { status: 'inactive' });
       await stopEngine(ctx, worldStatus.worldId);
@@ -84,11 +92,27 @@ export const restartDeadWorlds = internalMutation({
       }
       const engine = await ctx.db.get(worldStatus.engineId);
       if (!engine) {
-        throw new Error(`Invalid engine ID: ${worldStatus.engineId}`);
+        console.error(`Invalid engine ID: ${worldStatus.engineId}, skipping`);
+        continue;
+      }
+      // A status of 'running' with an engine that isn't running is an
+      // inconsistent state (e.g. a crashed engine that never rescheduled).
+      // Reconcile it to 'inactive' so the heartbeat path can cleanly restart
+      // it, rather than calling kickEngine which throws on a stopped engine.
+      if (!engine.running) {
+        console.warn(`Engine ${engine._id} not running but world marked running; resetting`);
+        await ctx.db.patch(worldStatus._id, { status: 'inactive' });
+        continue;
       }
       if (engine.currentTime && engine.currentTime < engineTimeout) {
         console.warn(`Restarting dead engine ${engine._id}...`);
-        await kickEngine(ctx, worldStatus.worldId);
+        // Isolate per-world failures so one bad world can't roll back the
+        // whole cron transaction and starve healthy worlds.
+        try {
+          await kickEngine(ctx, worldStatus.worldId);
+        } catch (e) {
+          console.error(`Failed to kick engine ${engine._id}: ${(e as Error).message}`);
+        }
       }
     }
   },
@@ -249,5 +273,28 @@ export const previousConversation = query({
       }
     }
     return null;
+  },
+});
+
+export const playerMemories = query({
+  args: {
+    worldId: v.id('worlds'),
+    playerId,
+    numberOfItems: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const memories = await ctx.db
+      .query('memories')
+      .withIndex('playerId', (q) => q.eq('playerId', args.playerId))
+      .order('desc')
+      .take(args.numberOfItems ?? 20);
+    return memories.map((m) => ({
+      _id: m._id,
+      _creationTime: m._creationTime,
+      description: m.description,
+      importance: m.importance,
+      lastAccess: m.lastAccess,
+      type: m.data.type,
+    }));
   },
 });

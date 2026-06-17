@@ -7,6 +7,14 @@ import { asyncMap } from '../util/asyncMap';
 import { GameId, agentId, conversationId, playerId } from '../aiTown/ids';
 import { SerializedPlayer } from '../aiTown/player';
 import { memoryFields } from './schema';
+import {
+  everosEnabled,
+  addGroupMemory,
+  flushGroup,
+  worldGroupId,
+  characterUserId,
+  EverosGroupMessage,
+} from '../util/everos';
 
 // How long to wait before updating a memory's last access time.
 export const MEMORY_ACCESS_THROTTLE = 300_000; // In ms
@@ -81,8 +89,48 @@ export async function rememberConversation(
     },
     embedding,
   });
+  // Mirror the raw conversation into EverOS. A group write gives us both
+  // per-character personal memory (by sender_id) and town-wide public memory
+  // (by group_id, used for the 大事记 timeline) in a single call.
+  await writeConversationToEveros(worldId, conversationId, player, otherPlayer, messages);
   await reflectOnMemories(ctx, worldId, playerId);
   return description;
+}
+
+async function writeConversationToEveros(
+  worldId: Id<'worlds'>,
+  conversationId: GameId<'conversations'>,
+  player: { id: string; name: string },
+  otherPlayer: { id: string; name: string },
+  messages: Doc<'messages'>[],
+) {
+  if (!everosEnabled()) {
+    return;
+  }
+  // Both participants run rememberConversation independently. Elect a single
+  // writer (smaller id) so the shared transcript lands in EverOS only once.
+  if (player.id > otherPlayer.id) {
+    return;
+  }
+  const nameById = new Map<string, string>([
+    [player.id, player.name],
+    [otherPlayer.id, otherPlayer.name],
+  ]);
+  const groupMessages: EverosGroupMessage[] = messages
+    .filter((m) => m.text)
+    .map((m) => ({
+      role: 'user',
+      sender_id: characterUserId(nameById.get(m.author) ?? m.author),
+      sender_name: nameById.get(m.author) ?? m.author,
+      timestamp: Math.floor(m._creationTime), // EverOS expects int64
+      content: m.text,
+    }));
+  if (!groupMessages.length) {
+    return;
+  }
+  const groupId = worldGroupId(worldId);
+  await addGroupMemory(groupId, groupMessages);
+  await flushGroup(groupId);
 }
 
 export const loadConversation = internalQuery({

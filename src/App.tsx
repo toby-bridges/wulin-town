@@ -8,7 +8,10 @@ import helpImg from '../assets/help.svg';
 // import { Authenticated, Unauthenticated } from 'convex/react';
 // import LoginButton from './components/buttons/LoginButton.tsx';
 import { useState } from 'react';
+import { useQuery } from 'convex/react';
+import { api } from '../convex/_generated/api';
 import ReactModal from 'react-modal';
+import Timeline from './components/Timeline.tsx';
 import MusicButton from './components/buttons/MusicButton.tsx';
 import Button from './components/buttons/Button.tsx';
 import InteractButton from './components/buttons/InteractButton.tsx';
@@ -26,6 +29,7 @@ const CONFIG = {
 export default function Home() {
   const [helpModalOpen, setHelpModalOpen] = useState(false);
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
+  const worldStatus = useQuery(api.world.defaultWorldStatus);
   return (
     <main className="relative flex min-h-screen flex-col items-center justify-between font-body game-background">
       <PoweredByConvex />
@@ -88,12 +92,7 @@ export default function Home() {
       >
         <div className="font-body">
           <h1 className="text-center text-6xl font-bold font-display game-title">大事记</h1>
-          <p className="mt-4 text-center text-gray-400">
-            暂无大事记，角色们正在创造新的故事...
-          </p>
-          <p className="mt-8 text-sm text-gray-500 text-center">
-            功能开发中，敬请期待
-          </p>
+          {historyModalOpen && <Timeline worldId={worldStatus?.worldId} />}
         </div>
       </ReactModal>
       {/*<div className="p-3 absolute top-0 right-0 z-10 text-2xl">
