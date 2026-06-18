@@ -22,8 +22,7 @@ import PoweredByConvex from './components/PoweredByConvex.tsx';
 // 配置信息
 const CONFIG = {
   githubUrl: 'https://github.com/toby-bridges/wulin-town',
-  personalSite: 'https://vibeathon-100.vercel.app/',
-  twitter: 'https://x.com/lijiuer92',
+  twitter: 'https://x.com/li9292',
 };
 
 export default function Home() {
@@ -61,22 +60,12 @@ export default function Home() {
           <h2 className="text-4xl mt-6">联系作者</h2>
           <p className="mt-4">
             <a
-              href={CONFIG.personalSite}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-blue-400 hover:text-blue-300 underline"
-            >
-              个人主页
-            </a>
-          </p>
-          <p className="mt-2">
-            <a
               href={CONFIG.twitter}
               target="_blank"
               rel="noopener noreferrer"
               className="text-blue-400 hover:text-blue-300 underline"
             >
-              Twitter/X: @lijiuer92
+              Twitter/X: @li9292
             </a>
           </p>
         </div>
