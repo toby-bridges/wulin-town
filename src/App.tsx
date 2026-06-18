@@ -1,7 +1,6 @@
 import Game from './components/Game.tsx';
 
 import { ToastContainer } from 'react-toastify';
-import convexImg from '../assets/convex.svg';
 import starImg from '../assets/star.svg';
 import helpImg from '../assets/help.svg';
 // import { UserButton } from '@clerk/clerk-react';
@@ -17,7 +16,6 @@ import Button from './components/buttons/Button.tsx';
 import InteractButton from './components/buttons/InteractButton.tsx';
 import FreezeButton from './components/FreezeButton.tsx';
 import { MAX_HUMAN_PLAYERS } from '../convex/constants.ts';
-import PoweredByConvex from './components/PoweredByConvex.tsx';
 
 // 配置信息
 const CONFIG = {
@@ -31,8 +29,6 @@ export default function Home() {
   const worldStatus = useQuery(api.world.defaultWorldStatus);
   return (
     <main className="relative flex min-h-screen flex-col items-center justify-between font-body game-background">
-      <PoweredByConvex />
-
       {/* 关于/联系 模态框 */}
       <ReactModal
         isOpen={helpModalOpen}
@@ -121,12 +117,6 @@ export default function Home() {
 
         <Game />
 
-        {/* Powered by Convex */}
-        <div className="flex justify-center py-2">
-          <a href="https://convex.dev/c/ai-town" target="_blank" rel="noopener noreferrer">
-            <img className="w-20 h-8" src={convexImg} alt="Convex" />
-          </a>
-        </div>
         <ToastContainer position="bottom-right" autoClose={2000} closeOnClick theme="dark" />
       </div>
     </main>
