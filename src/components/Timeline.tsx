@@ -80,7 +80,15 @@ export default function Timeline({ worldId }: { worldId?: Id<'worlds'> }) {
               {new Date(ev.timestamp).toLocaleString()}
             </time>
           )}
-          <p className="leading-snug">{ev.text}</p>
+          {ev.text
+            .split(/(?<=[。！？\n])/)
+            .map((s) => s.trim())
+            .filter(Boolean)
+            .map((line, j) => (
+              <p key={j} className="leading-snug mb-1 whitespace-pre-line">
+                {line}
+              </p>
+            ))}
           {ev.participants.length > 0 && (
             <p className="mt-1 text-xs text-yellow-400">
               {ev.participants.join('、')}
