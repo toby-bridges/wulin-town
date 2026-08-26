@@ -82,6 +82,7 @@ export const Player = ({
         textureUrl={character.textureUrl}
         spritesheetData={character.spritesheetData}
         speed={character.speed}
+        tint={character.tint}
         onClick={() => {
           onClick({ kind: 'player', id: player.id });
         }}

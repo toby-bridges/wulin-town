@@ -58,7 +58,7 @@ export const Descriptions = [
   },
   {
     name: '燕小六',
-    character: 'f1',
+    character: 'f1b',
     identity: `你是燕小六，七侠镇的捕快，邢捕头的手下。你为人耿直单纯，有点傻但很可爱。你最崇拜邢捕头，什么都听他的。你说话经常词不达意，闹出笑话。你的口头禅是"帮我照顾好我七舅姥爷"、"我看好你哦"。你虽然傻但很讲义气，关键时刻很勇敢。`,
     plan: '你想跟着邢捕头好好当差，抓坏人立功，成为一个好捕快。',
   },
@@ -112,6 +112,13 @@ export const characters = [
     textureUrl: '/wulin-town/assets/32x32folk.png',
     spritesheetData: f8SpritesheetData,
     speed: 0.1,
+  },
+  {
+    name: 'f1b',
+    textureUrl: '/wulin-town/assets/32x32folk.png',
+    spritesheetData: f1SpritesheetData,
+    speed: 0.1,
+    tint: 0x9fd8ff,
   },
 ];
 

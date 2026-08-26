@@ -15,6 +15,7 @@ export const Character = ({
   emoji = '',
   isViewer = false,
   speed = 0.1,
+  tint,
   onClick,
 }: {
   // Path to the texture packed image.
@@ -35,6 +36,8 @@ export const Character = ({
   isViewer?: boolean;
   // The speed of the animation. Can be tuned depending on the side and speed of the NPC.
   speed?: number;
+  // Optional color tint applied to the sprite (e.g. to visually distinguish a character).
+  tint?: number;
   onClick: () => void;
 }) => {
   const [spriteSheet, setSpriteSheet] = useState<Spritesheet>();
@@ -100,6 +103,7 @@ export const Character = ({
         textures={spriteSheet.animations[direction]}
         animationSpeed={speed}
         anchor={{ x: 0.5, y: 0.5 }}
+        tint={tint ?? 0xffffff}
       />
       {emoji && (
         <Text x={0} y={-24} scale={{ x: -0.8, y: 0.8 }} text={emoji} anchor={{ x: 0.5, y: 0.5 }} />
