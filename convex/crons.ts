@@ -19,6 +19,9 @@ crons.daily('vacuum old entries', { hourUTC: 4, minuteUTC: 20 }, internal.crons.
 
 crons.interval('generate jianghu event', { minutes: 30 }, internal.director.generateEvent, {});
 
+// UTC 15:00 = 北京时间 23:00，一天的戏演完再总结。
+crons.daily('daily episode recap', { hourUTC: 15, minuteUTC: 0 }, internal.director.generateRecap, {});
+
 export default crons;
 
 const TablesToVacuum: TableNames[] = [

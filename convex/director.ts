@@ -127,3 +127,100 @@ export const listEvents = query({
       .take(50);
   },
 });
+
+// 剧集回顾上下文：默认世界 + 近 24 小时事件。世界不存在则返回 null。
+export const recapContext = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const worldStatus = await ctx.db
+      .query('worldStatus')
+      .filter((q) => q.eq(q.field('isDefault'), true))
+      .first();
+    if (!worldStatus) return null;
+    const since = Date.now() - 24 * 60 * 60 * 1000;
+    const events = await ctx.db
+      .query('jianghuEvents')
+      .withIndex('worldTime', (q) => q.eq('worldId', worldStatus.worldId).gte('startTime', since))
+      .collect();
+    return { worldId: worldStatus.worldId, events };
+  },
+});
+
+export const insertRecap = internalMutation({
+  args: {
+    worldId: v.id('worlds'),
+    title: v.string(),
+    body: v.string(),
+    day: v.string(),
+    eventIds: v.array(v.id('jianghuEvents')),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.insert('episodeRecaps', args);
+  },
+});
+
+// 每日说书人总结。全程 fail-soft：任何失败只打日志，绝不抛错。
+export const generateRecap = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    try {
+      const context = await ctx.runQuery(internal.director.recapContext, {});
+      if (!context || context.events.length === 0) {
+        console.log('[recap] no events in last 24h, skip');
+        return;
+      }
+      const eventLines = context.events.map((e) => `- ${e.title}：${e.description}`);
+      const prompt = [
+        '你是《武林外传》的说书人。以下是同福客栈今天发生的事件，请写一段章回体"剧集回顾"。',
+        '要求：先给一个对仗的回目标题（如"第一回 邢捕头查案反被抓 佟掌柜算账倒贴钱"），',
+        '再写不超过 200 字的正文，说书人口吻，突出笑点，不虚构事件之外的大情节。',
+        '只输出 JSON：{"title": "回目标题", "body": "正文"}',
+        '',
+        '今日事件：',
+        ...eventLines,
+      ].join('\n');
+      const { content } = await chatCompletion({
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 500,
+      });
+      // recap 输出用 title/body 字段，独立解析（不复用 parseDirectorOutput）：
+      const stripped = content.replace(/```(?:json)?/gi, '').trim();
+      const match = stripped.match(/\{[\s\S]*\}/);
+      if (!match) {
+        console.log('[recap] unparseable, skip');
+        return;
+      }
+      const parsed = JSON.parse(match[0]) as unknown;
+      if (typeof parsed !== 'object' || parsed === null) {
+        console.log('[recap] missing fields, skip');
+        return;
+      }
+      const obj = parsed as Record<string, unknown>;
+      if (typeof obj.title !== 'string' || typeof obj.body !== 'string') {
+        console.log('[recap] missing fields, skip');
+        return;
+      }
+      await ctx.runMutation(internal.director.insertRecap, {
+        worldId: context.worldId,
+        title: sanitizeForPrompt(obj.title, 60),
+        body: sanitizeForPrompt(obj.body, 600),
+        day: new Date().toISOString().slice(0, 10),
+        eventIds: context.events.map((e) => e._id),
+      });
+      console.log(`[recap] ${obj.title}`);
+    } catch (e) {
+      console.log('[recap] failed, skip:', String(e));
+    }
+  },
+});
+
+export const listRecaps = query({
+  args: { worldId: v.id('worlds') },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query('episodeRecaps')
+      .withIndex('worldDay', (q) => q.eq('worldId', args.worldId))
+      .order('desc')
+      .take(30);
+  },
+});
