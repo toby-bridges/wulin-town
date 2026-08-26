@@ -137,6 +137,7 @@ export const PixiGame = (props: {
           isViewer={p.id === humanPlayerId}
           onClick={props.setSelectedElement}
           historicalTime={props.historicalTime}
+          worldId={props.worldId}
         />
       ))}
     </PixiViewport>

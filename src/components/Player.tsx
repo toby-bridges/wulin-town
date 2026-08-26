@@ -1,4 +1,5 @@
 import { Character } from './Character.tsx';
+import { SpeechBubble } from './SpeechBubble.tsx';
 import { orientationDegrees } from '../../convex/util/geometry.ts';
 import { characters } from '../../data/characters.ts';
 import { toast } from 'react-toastify';
@@ -10,6 +11,8 @@ import { useHistoricalValue } from '../hooks/useHistoricalValue.ts';
 import { PlayerDescription } from '../../convex/aiTown/playerDescription.ts';
 import { WorldMap } from '../../convex/aiTown/worldMap.ts';
 import { ServerGame } from '../hooks/serverGame.ts';
+import { useQuery } from 'convex/react';
+import { api } from '../../convex/_generated/api';
 
 export type SelectElement = (element?: { kind: 'player'; id: GameId<'players'> }) => void;
 
@@ -21,6 +24,7 @@ export const Player = ({
   player,
   onClick,
   historicalTime,
+  worldId,
 }: {
   game: ServerGame;
   isViewer: boolean;
@@ -28,6 +32,7 @@ export const Player = ({
 
   onClick: SelectElement;
   historicalTime?: number;
+  worldId: Id<'worlds'>;
 }) => {
   const playerCharacter = game.playerDescriptions.get(player.id)?.character;
   if (!playerCharacter) {
@@ -42,6 +47,21 @@ export const Player = ({
     playerLocation(player),
     locationBuffer,
   );
+
+  // 头顶气泡：订阅本角色所在对话的消息，取该角色最近一条消息（15 秒内）作为气泡文本。
+  // useQuery 必须在下面所有 early return 之前调用，以保证 hooks 顺序在每次渲染间保持一致。
+  const conversation = [...game.world.conversations.values()].find((c) =>
+    c.participants.has(player.id),
+  );
+  const messages = useQuery(
+    api.messages.listMessages,
+    conversation ? { worldId, conversationId: conversation.id } : 'skip',
+  );
+  const myLatest = messages?.filter((m) => m.author === player.id).at(-1);
+  const now = historicalTime ?? Date.now();
+  const bubbleText =
+    myLatest && now - myLatest._creationTime < 15_000 ? myLatest.text : undefined;
+
   if (!character) {
     if (!logged.has(playerCharacter)) {
       logged.add(playerCharacter);
@@ -87,6 +107,13 @@ export const Player = ({
           onClick({ kind: 'player', id: player.id });
         }}
       />
+      {bubbleText && (
+        <SpeechBubble
+          x={historicalLocation.x * tileDim + tileDim / 2}
+          y={historicalLocation.y * tileDim + tileDim / 2 - 40}
+          text={bubbleText}
+        />
+      )}
     </>
   );
 };
