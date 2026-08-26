@@ -31,13 +31,13 @@ export default function Timeline({ worldId }: { worldId?: Id<'worlds'> }) {
       </div>
       {tab === 'recap' && (
         <>
-          {recaps === undefined && (
+          {worldId && recaps === undefined && (
             <div className="mt-8 flex flex-col items-center">
               <div className="inline-block w-8 h-8 border-4 border-yellow-500 border-t-transparent rounded-full animate-spin"></div>
               <p className="mt-3 text-gray-400">正在翻阅客栈的旧账本...</p>
             </div>
           )}
-          {recaps?.length === 0 && (
+          {(!worldId || recaps?.length === 0) && (
             <p className="mt-8 text-center text-gray-400">
               说书人还没开张，今晚的戏演完就有回顾。
             </p>
@@ -54,13 +54,13 @@ export default function Timeline({ worldId }: { worldId?: Id<'worlds'> }) {
       )}
       {tab === 'events' && (
         <>
-          {events === undefined && (
+          {worldId && events === undefined && (
             <div className="mt-8 flex flex-col items-center">
               <div className="inline-block w-8 h-8 border-4 border-yellow-500 border-t-transparent rounded-full animate-spin"></div>
               <p className="mt-3 text-gray-400">正在翻阅客栈的旧账本...</p>
             </div>
           )}
-          {events?.length === 0 && (
+          {(!worldId || events?.length === 0) && (
             <p className="mt-8 text-center text-gray-400">客栈暂无大事，岁月静好。</p>
           )}
           {events && events.length > 0 &&
