@@ -103,9 +103,14 @@ export const generateEvent = internalAction({
 export const activeEventForPrompt = internalQuery({
   args: { worldId: v.id('worlds') },
   handler: async (ctx, args) => {
+    // 按索引字段过滤后，Convex 隐式按 _creationTime 排序，默认升序（最旧的在前）。
+    // "至多一个 active" 是 publishEvent 维护的不变量，不是数据库约束——一旦哪天
+    // 被 bug 打破，不加 order('desc') 这里会稳定拿到最旧的 active 事件，把过期
+    // 设定注入对话。显式按新到旧排序，与 publishEvent 里对同一风险的防御强度一致。
     const event = await ctx.db
       .query('jianghuEvents')
       .withIndex('worldStatus', (q) => q.eq('worldId', args.worldId).eq('status', 'active'))
+      .order('desc')
       .first();
     return event ? { title: event.title, description: event.description } : null;
   },
