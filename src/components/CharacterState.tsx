@@ -152,7 +152,10 @@ export default function CharacterState({
       <h3 className="bg-brown-700 mt-2 p-1 font-display text-lg text-center">记忆</h3>
       <div className="bg-brown-700 p-2 text-sm font-body flex flex-col gap-2">
         {memories === undefined && <p className="opacity-60">加载记忆中…</p>}
-        {memories && otherMemories.length === 0 && <p className="opacity-60">暂无记忆</p>}
+        {memories && memories.length === 0 && <p className="opacity-60">暂无记忆</p>}
+        {memories && memories.length > 0 && otherMemories.length === 0 && (
+          <p className="opacity-60">记忆已在上方「江湖关系」中展示</p>
+        )}
         {memories &&
           otherMemories.map((m) => (
             <div key={m._id} className="border-t border-brown-600 pt-1 first:border-t-0 first:pt-0">
