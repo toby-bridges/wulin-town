@@ -50,31 +50,50 @@
 **现象 Symptom**：
 v1.1 迭代时同时有三个 AI agent 在同一个工作目录里改不同文件。其中一个为了核对 eslint 基线，跑了 `git stash` 再 `git stash pop`。
 
+同一轮里还发生了第二起、性质更隐蔽的事故：agent A 执行 `git add 自己的两个文件`，在它执行 `git commit` **之前**，agent B 执行了 `git add 自己的文件` + `git commit`。B 的提交把 A 已经放进 index 的两个文件一起带走了，提交信息只描述了 B 的改动。A 随后的 `git commit` 发现无差异，直接 no-op 退出。
+
 **根因 Root Cause**：
-`git stash` 作用于**整个工作区**，不是只作用于你自己改的文件。当时另外两个 agent 手上都有未提交的改动，这一下把别人的活儿一起卷进了 stash。这次 pop 回来了没出事，但只要 pop 失败、或中间有人又改了同一个文件产生冲突，别人几十分钟的工作就没了。
+两起事故是同一个病：**git 的工作区和 index 都是全局共享状态，不属于任何一个"任务"**。
+
+- `git stash` 作用于整个工作区，会把别人未提交的改动一起卷走
+- 更隐蔽的是：`git add` 和 `git commit` 是**两条命令、不是一个原子操作**。中间这个空档里，别人的 `git commit` 会把你暂存的东西一起提交掉。即使双方都规规矩矩用了显式路径，也挡不住——因为 index 只有一个
 
 **修复 Fix**：
-并行开发时禁用这三类"作用于整个工作区"的命令：
 ```bash
-# 禁用
+# 禁用：作用于整个工作区
 git stash / git stash pop
 git checkout -- .
 git reset --hard
 
-# 改用只作用于指定文件的方式
-git add path/to/my-file.ts && git commit -m "..."   # 显式路径，不用 git add -A
-git diff path/to/my-file.ts                          # 只看自己的
+# 不够：显式路径 add 仍然经过共享 index，中间有空档
+git add my-file.ts && git commit -m "..."
+
+# 正确：git commit <paths> 完全绕开 index，用临时索引一步提交
+git commit -m "..." -- src/my-file.ts src/my-other-file.ts
 ```
 
+`git commit <paths>`（也叫 `--only` 模式）不碰共享 index，一条命令完成暂存+提交，没有可以被别人插进来的空档。
+
 **验证 Verify**：
-提交后 `git show --stat <hash>` 确认改动文件数与预期一致，没有夹带别人的文件。
+提交后 `git show --stat <hash>` 确认改动文件数与预期一致，没有夹带别人的文件。发现夹带了也别慌：**代码在 git 里就是安全的**，只是提交信息错位。不要为了"历史好看"去 amend 或 rebase——别人可能已经记下了那个 hash，重写只会更乱。
+
+事故还有第三幕，也是损失最大的一幕：混合提交发生后，B 为了"把历史整理干净"，`git revert` 掉整个混合提交、再单独重新提交自己那部分。但 revert 撤销的是**整个提交**——A 的两个文件也被一起撤销了，而重新提交时只包含了 B 自己的文件。**A 已经完成并通过验证的修复就这样被静默删除了**，B 在报告里还写着"已 revert 后干净重提"，完全没意识到删了别人的东西。
+
+恢复方式（代码没真丢，只要那个混合提交还在）：
+```bash
+# 从混合提交里把被误删的文件原样取回，直接写文件、不碰 index
+git show <混合提交>:path/to/file.ts > path/to/file.ts
+git commit -m "restore ..." -- path/to/file.ts
+```
 
 **预防 Prevention**：
-- 给每个并行任务明确列出"你只能碰这几个文件"，并在指令里写明禁用 stash
-- 更彻底的办法是用 `git worktree` 给每个 agent 独立工作区，代价是每份都要装 node_modules
+- 并行任务一律用 `git commit -m "..." -- <显式路径>` 一步到位，不要分两步
+- **发现自己的提交夹带了别人的文件时，什么都别做，报告给协调者**。`revert` 一个混合提交等于删除别人的工作；"整理干净"的冲动是这轮损失最大的一次操作
+- 光在指令里写禁令是不够的——这轮我明确写了"只提交这一个文件"，事故照样发生了两次。**根本解法是 `git worktree` 给每个 agent 独立工作区**，代价是每份都要装 node_modules
+- 事后不要试图拆分已混合的提交，成本高于收益
 
-**我当时的错误假设**：以为 stash 只影响自己改的文件
-**贝叶斯更新**：并行环境下"全局作用的命令"是危险品 40% → 95%
+**我当时的错误假设**：以为"用显式路径 add"就足够隔离了
+**贝叶斯更新**：并行下 git 的共享状态（工作区 + index）都是危险品，且 add/commit 非原子 40% → 95%
 
 ---
 
