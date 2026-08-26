@@ -12,7 +12,8 @@
     "dashboard": "convex dashboard",
     "test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js --verbose",
     "level-editor": "vite src/editor/",
-    "le": "vite src/editor/"
+    "le": "vite src/editor/",
+    "reset": "convex run testing:resetWorld && convex run init"
   },
   "dependencies": {
     "@clerk/clerk-react": "^4.27.0",
