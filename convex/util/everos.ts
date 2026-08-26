@@ -14,8 +14,14 @@ const DEFAULT_BASE_URL = 'https://api.evermind.ai';
 const REQUEST_TIMEOUT_MS = 8000;
 
 // Prefix keeps this project's memory scopes from colliding with anything else
-// in the same EverOS account.
-const SCOPE_PREFIX = 'wulin';
+// in the same EverOS account. Dev and production must use different prefixes to
+// prevent memories from leaking between environments: characterUserId() lacks a
+// worldId parameter, so dev and prod would write to the same user scope.
+// Default is 'wulin_dev' (dev-side) — production must explicitly set
+// EVEROS_SCOPE_PREFIX=wulin to use the clean scope. This is intentional: if prod
+// forgets the env var, dev and prod share scopes (recoverable by adding the var);
+// the reverse would silently pollute production, with no way to recover.
+const SCOPE_PREFIX = process.env.EVEROS_SCOPE_PREFIX ?? 'wulin_dev';
 
 export function everosEnabled(): boolean {
   return !!process.env.EVEROS_API_KEY;
