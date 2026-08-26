@@ -77,6 +77,9 @@ export const generateEvent = internalAction({
       const { content } = await chatCompletion({
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 400,
+        // 手测发现默认采样下模型偏好套用范例里的"六扇门查文书"设定，
+        // 提高 temperature 增加每次生成的题材多样性（配合上面的 prompt 提醒）。
+        temperature: 0.9,
       });
       const parsed = parseDirectorOutput(content);
       if (!parsed) {
