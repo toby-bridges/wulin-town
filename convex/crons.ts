@@ -17,6 +17,8 @@ crons.interval('restart dead worlds', { seconds: 60 }, internal.world.restartDea
 
 crons.daily('vacuum old entries', { hourUTC: 4, minuteUTC: 20 }, internal.crons.vacuumOldEntries);
 
+crons.interval('generate jianghu event', { minutes: 30 }, internal.director.generateEvent, {});
+
 export default crons;
 
 const TablesToVacuum: TableNames[] = [
