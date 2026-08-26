@@ -235,3 +235,26 @@ export const testConvo = internalAction({
     return await a.readAll();
   },
 });
+
+// 从 Convex 云端探测 LLM_API_URL 的连通性并列出可用模型 ID。
+// 本机网络与 Convex 出口不同，可达性以此为准。
+export const listModels = internalAction({
+  args: {},
+  handler: async () => {
+    const url = process.env.LLM_API_URL;
+    const key = process.env.LLM_API_KEY;
+    if (!url) throw new Error('先设置 LLM_API_URL');
+    const resp = await fetch(`${url.replace(/\/v1$/, '')}/v1/models`, {
+      headers: key ? { Authorization: `Bearer ${key}` } : {},
+    });
+    const text = await resp.text();
+    console.log(`HTTP ${resp.status}`);
+    try {
+      const ids = (JSON.parse(text).data ?? []).map((m: { id: string }) => m.id);
+      console.log(JSON.stringify(ids));
+      return { status: resp.status, ids };
+    } catch {
+      return { status: resp.status, body: text.slice(0, 2000) };
+    }
+  },
+});

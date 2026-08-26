@@ -174,7 +174,7 @@ export async function chatCompletion(
       // thinking makes content return directly. Only inject for DeepSeek —
       // other OpenAI-compatible providers reject unrecognised properties.
       body: JSON.stringify(
-        config.provider === 'custom' && config.url.includes('deepseek')
+        config.provider === 'custom' && (body.model ?? '').toLowerCase().includes('deepseek')
           ? { ...body, thinking: { type: 'disabled' } }
           : body,
       ),
