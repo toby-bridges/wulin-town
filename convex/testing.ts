@@ -236,6 +236,34 @@ export const testConvo = internalAction({
   },
 });
 
+// 直接打 LLM_API_URL 的 embeddings 端点，绕开 Jina 分支，用于确认
+// 换供应商前该模型真实可用、且输出维度与 EMBEDDING_DIMENSION 一致。
+export const probeEmbeddingProvider = internalAction({
+  args: { model: v.string() },
+  handler: async (_ctx, args) => {
+    const url = process.env.LLM_API_URL;
+    const key = process.env.LLM_API_KEY;
+    if (!url) throw new Error('先设置 LLM_API_URL');
+    const resp = await fetch(`${url.replace(/\/v1$/, '')}/v1/embeddings`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(key ? { Authorization: `Bearer ${key}` } : {}),
+      },
+      body: JSON.stringify({ model: args.model, input: '同福客栈的账本被人改过' }),
+    });
+    const text = await resp.text();
+    if (!resp.ok) {
+      console.log(`HTTP ${resp.status}: ${text.slice(0, 500)}`);
+      return { status: resp.status, error: text.slice(0, 500) };
+    }
+    const json = JSON.parse(text);
+    const dim = json?.data?.[0]?.embedding?.length ?? null;
+    console.log(`model=${args.model} status=${resp.status} dimension=${dim}`);
+    return { status: resp.status, model: args.model, dimension: dim };
+  },
+});
+
 // 从 Convex 云端探测 LLM_API_URL 的连通性并列出可用模型 ID。
 // 本机网络与 Convex 出口不同，可达性以此为准。
 export const listModels = internalAction({
