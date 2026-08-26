@@ -19,6 +19,25 @@ function ImportanceBadge({ importance }: { importance: number }) {
   );
 }
 
+// Conversation memories are stored as "Conversation with <name> at <date>: <content>"
+// (see convex/agent/memory.ts rememberConversation). The relationship block already
+// shows the counterpart's name in its own label, so this strips that boilerplate and
+// shows only the LLM-authored content. Anchored on the actual name (rather than a
+// locale-dependent date regex) and fails open: if the text doesn't match this exact
+// shape, the original description is returned untouched.
+function stripConversationPrefix(description: string, otherPlayerNames: string[]): string {
+  const name = otherPlayerNames[0];
+  if (!name) {
+    return description;
+  }
+  const prefix = `Conversation with ${name} at `;
+  if (!description.startsWith(prefix)) {
+    return description;
+  }
+  const separator = description.indexOf(': ', prefix.length);
+  return separator === -1 ? description : description.slice(separator + 2);
+}
+
 export default function CharacterState({
   worldId,
   game,
@@ -42,7 +61,36 @@ export default function CharacterState({
   const activity = player.activity && player.activity.until > now ? player.activity : undefined;
   const destination = player.pathfinding?.destination;
   const thinking = agent?.inProgressOperation?.name;
-  const relationships = memories?.filter((m) => m.type === 'relationship') ?? [];
+
+  // "江湖关系": the most recent conversation with each distinct counterpart,
+  // up to 5. Sourced from `conversation` memories (no dedicated `relationship`
+  // memory type is ever generated today, see task-8-report.md). Sorted by
+  // `_creationTime` rather than `lastAccess` — `lastAccess` is bumped whenever
+  // a memory is retrieved for prompt context (see MEMORY_ACCESS_THROTTLE in
+  // convex/agent/memory.ts), so it tracks "recently recalled", not "recently
+  // happened"; `_creationTime` is immutable and matches this panel's existing
+  // newest-first ordering.
+  const conversationMemories = (memories ?? [])
+    .filter((m) => m.type === 'conversation' && (m.otherPlayerNames?.length ?? 0) > 0)
+    .slice()
+    .sort((a, b) => b._creationTime - a._creationTime);
+  const relationships: typeof conversationMemories = [];
+  const seenCounterparts = new Set<string>();
+  for (const m of conversationMemories) {
+    const key = (m.otherPlayerNames ?? []).join('、');
+    if (seenCounterparts.has(key)) {
+      continue;
+    }
+    seenCounterparts.add(key);
+    relationships.push(m);
+    if (relationships.length >= 5) {
+      break;
+    }
+  }
+  // The main "记忆" list below excludes whatever's already shown above, so the
+  // same conversation summary isn't rendered twice on one panel.
+  const relationshipIds = new Set(relationships.map((m) => m._id));
+  const otherMemories = (memories ?? []).filter((m) => !relationshipIds.has(m._id));
 
   return (
     <div className="box flex-grow mt-6">
@@ -87,10 +135,15 @@ export default function CharacterState({
         <>
           <h3 className="bg-brown-700 mt-2 p-1 font-display text-lg text-center">江湖关系</h3>
           <div className="bg-brown-700 p-2 text-sm font-body flex flex-col gap-2">
-            {relationships.slice(0, 5).map((m) => (
-              <p key={m._id} className="leading-tight">
-                {m.description}
-              </p>
+            {relationships.map((m) => (
+              <div key={m._id} className="border-t border-brown-600 pt-1 first:border-t-0 first:pt-0">
+                <div className="text-yellow-300 text-xs mb-1">
+                  和 {(m.otherPlayerNames ?? []).join('、')} 的交往
+                </div>
+                <p className="leading-tight">
+                  {stripConversationPrefix(m.description, m.otherPlayerNames ?? [])}
+                </p>
+              </div>
             ))}
           </div>
         </>
@@ -99,9 +152,9 @@ export default function CharacterState({
       <h3 className="bg-brown-700 mt-2 p-1 font-display text-lg text-center">记忆</h3>
       <div className="bg-brown-700 p-2 text-sm font-body flex flex-col gap-2">
         {memories === undefined && <p className="opacity-60">加载记忆中…</p>}
-        {memories && memories.length === 0 && <p className="opacity-60">暂无记忆</p>}
+        {memories && otherMemories.length === 0 && <p className="opacity-60">暂无记忆</p>}
         {memories &&
-          memories.map((m) => (
+          otherMemories.map((m) => (
             <div key={m._id} className="border-t border-brown-600 pt-1 first:border-t-0 first:pt-0">
               <div className="flex items-center gap-2 mb-1">
                 <span className="text-yellow-300 text-xs">

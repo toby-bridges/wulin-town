@@ -288,13 +288,50 @@ export const playerMemories = query({
       .withIndex('playerId', (q) => q.eq('playerId', args.playerId))
       .order('desc')
       .take(args.numberOfItems ?? 20);
-    return memories.map((m) => ({
-      _id: m._id,
-      _creationTime: m._creationTime,
-      description: m.description,
-      importance: m.importance,
-      lastAccess: m.lastAccess,
-      type: m.data.type,
-    }));
+
+    // Conversation memories only, so we skip this query for worlds/characters
+    // with no conversation memories at all.
+    const needsNames = memories.some((m) => m.data.type === 'conversation');
+    const nameById = new Map<string, string>();
+    if (needsNames) {
+      const playerDescriptions = await ctx.db
+        .query('playerDescriptions')
+        .withIndex('worldId', (q) => q.eq('worldId', args.worldId))
+        .collect();
+      for (const p of playerDescriptions) {
+        nameById.set(p.playerId, p.name);
+      }
+    }
+
+    return memories.map((m) => {
+      const { data } = m;
+      // `otherPlayerNames` is only meaningful for `conversation` memories;
+      // left undefined for the other two types (same consistent object
+      // shape for every item, so the client doesn't need a type predicate
+      // to use it). `data.playerIds` is "the other participants" (the
+      // conversation's author already excludes itself, see
+      // rememberConversation), but we still filter defensively rather than
+      // assume that invariant holds, and resolve ids to display names here
+      // so the client never sees a raw `p:N` id. Unresolvable ids
+      // (shouldn't happen for AI agents, but could in principle for a human
+      // visitor who left) are dropped rather than shown as a raw id or a
+      // made-up name.
+      const otherPlayerNames =
+        data.type === 'conversation'
+          ? data.playerIds
+              .filter((id) => id !== args.playerId)
+              .map((id) => nameById.get(id))
+              .filter((name): name is string => !!name)
+          : undefined;
+      return {
+        _id: m._id,
+        _creationTime: m._creationTime,
+        description: m.description,
+        importance: m.importance,
+        lastAccess: m.lastAccess,
+        type: data.type,
+        otherPlayerNames,
+      };
+    });
   },
 });
