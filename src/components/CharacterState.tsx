@@ -42,6 +42,7 @@ export default function CharacterState({
   const activity = player.activity && player.activity.until > now ? player.activity : undefined;
   const destination = player.pathfinding?.destination;
   const thinking = agent?.inProgressOperation?.name;
+  const relationships = memories?.filter((m) => m.type === 'relationship') ?? [];
 
   return (
     <div className="box flex-grow mt-6">
@@ -81,6 +82,19 @@ export default function CharacterState({
           </div>
         )}
       </div>
+
+      {relationships.length > 0 && (
+        <>
+          <h3 className="bg-brown-700 mt-2 p-1 font-display text-lg text-center">江湖关系</h3>
+          <div className="bg-brown-700 p-2 text-sm font-body flex flex-col gap-2">
+            {relationships.slice(0, 5).map((m) => (
+              <p key={m._id} className="leading-tight">
+                {m.description}
+              </p>
+            ))}
+          </div>
+        </>
+      )}
 
       <h3 className="bg-brown-700 mt-2 p-1 font-display text-lg text-center">记忆</h3>
       <div className="bg-brown-700 p-2 text-sm font-body flex flex-col gap-2">
