@@ -6,7 +6,11 @@ const MAX_CHARS = 40;
 const WRAP_WIDTH = 150;
 
 export function SpeechBubble({ x, y, text }: { x: number; y: number; text: string }) {
-  const shown = text.length > MAX_CHARS ? text.slice(0, MAX_CHARS) + '…' : text;
+  // 按 Unicode code point 截断（而非 UTF-16 code unit），避免在代理对（如 emoji）中间切开导致
+  // 出现孤立高位代理、渲染出缺字形/替换符。LLM 生成的文本不受控，可能在第 40 个字符处恰好
+  // 压中代理对边界。
+  const chars = [...text];
+  const shown = chars.length > MAX_CHARS ? chars.slice(0, MAX_CHARS).join('') + '…' : text;
   const style = useMemo(
     () =>
       new PIXI.TextStyle({
