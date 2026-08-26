@@ -63,7 +63,7 @@ export const kick = internalMutation({
 // to a specified value so the engine stops skipping inputs. Use when
 // processedInputNumber is ahead of the actual input sequence (e.g. after
 // a botched engine migration that carried over a stale cursor).
-export const resetInputCursor = mutation({
+export const resetInputCursor = internalMutation({
   args: { processedInputNumber: v.number() },
   handler: async (ctx, args) => {
     const { engine } = await getDefaultWorld(ctx.db);
@@ -125,7 +125,7 @@ export const archive = internalMutation({
 });
 
 // 重置世界（归档旧世界，以便 init 创建新世界）
-export const resetWorld = mutation({
+export const resetWorld = internalMutation({
   handler: async (ctx) => {
     const worldStatus = await ctx.db
       .query('worldStatus')
