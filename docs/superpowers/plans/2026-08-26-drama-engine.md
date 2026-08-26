@@ -13,7 +13,8 @@
 - 所有新增用户可见文案为中文；角色性格/关系边界锁死（见 docs/PROGRESS.md 关键决策），事件不得违背人设
 - 不新增任何美术/音频资产；视觉差异只用代码（tint、文字）实现
 - `EMBEDDING_DIMENSION` 保持 `1024` 不变（主/兜底方案均为 1024 维）
-- EverOS 本次不启用：不设置 `EVEROS_API_KEY` 即全链路 fail-soft 关闭，不删除 everos 代码
+- ~~EverOS 本次不启用~~ **（2026-08-26 用户裁定推翻）**：旧 deployment 继承了 `EVEROS_API_KEY`，EverOS 实际在运行。用户决定**保留 EverOS**（跨会话长期记忆、大事记多一数据源），并要求把 EverOS 路径的注入漏洞一并补上（Task 3b）
+- 嵌入实际走 **Jina**（`JINA_API_KEY` 由旧 deployment 继承，`llm.ts` 里 Jina 优先于 `LLM_EMBEDDING_MODEL`），维度同为 1024，与 `EMBEDDING_DIMENSION` 一致
 - 编剧/回顾等所有新增外部调用必须 fail-soft：try/catch 包裹，失败只 console.log，绝不抛错阻塞引擎
 - 保持"无人观看 5 分钟世界自动暂停"机制不变（`convex/crons.ts` 的 stop inactive worlds 不动）
 - 修改 `data/characters.ts`、`convex/constants.ts` 等初始化数据后必须 `npm run reset`（Task 1 创建）再验证
