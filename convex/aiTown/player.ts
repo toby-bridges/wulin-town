@@ -188,7 +188,8 @@ export class Player {
       }
     }
     let position;
-    for (let attempt = 0; attempt < 10; attempt++) {
+    // 手绘碰撞图后可走格仅约 35%：10 次随机撒点全落墙里的概率约 1.4%，50 次可忽略。
+    for (let attempt = 0; attempt < 50; attempt++) {
       const candidate = {
         x: Math.floor(Math.random() * game.worldMap.width),
         y: Math.floor(Math.random() * game.worldMap.height),

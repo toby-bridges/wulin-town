@@ -10,6 +10,7 @@
 
 | ID | 日期 | 标题 | 标签 | 一句话结论 |
 |---|---|---|---|---|
+| PIT-0015 | 2026-08-28 | 换碰撞数据时站在新墙格里的角色会永久卡死 | 地图, 碰撞, 引擎 | 改 objmap 必须同事务搬走受困角色并 kick 引擎（testing:patchMapCollision 已内置） |
 | PIT-0014 | 2026-08-27 | 多 agent 共享工作区里 git stash 会卷走别人的活 | git, 并行开发 | 并行开发禁用 stash/checkout--/reset，只用显式路径提交 |
 | PIT-0013 | 2026-08-27 | Convex 生成文件未提交导致干净环境构建失败 | convex, 部署, 类型 | 新增 convex 函数后必须同步提交 _generated/api.d.ts |
 | PIT-0012 | 2026-08-27 | schema 里有类型定义 ≠ 库里有这种数据 | 计划, 数据 | 引用某类数据前先查库确认它真的被写入过 |
@@ -42,6 +43,41 @@
 ---
 
 ## 日志（新记录插在最上面）
+
+### PIT-0015: 换碰撞数据时，站在新墙格里的角色会永久卡死
+**日期**：2026-08-28
+**标签**：`地图` `碰撞` `引擎`
+
+**现象 Symptom**（裸 patch objectTiles 将会发生；本次靠代码裁决提前拦截，未上演）：
+角色原地冻结，日志循环：findRoute 正常返回 → `tickPosition` 报 `Stopping path ... world blocked`
+→ 每 60 秒一条 `Timing out pathfinding` 后周而复始，永不恢复。
+
+**根因 Root Cause**：
+- `findRoute` 只对邻格做 blocked 检查，**不检查起点**（`movement.ts:93, 117-126`）——所以寻路"成功"；
+- 但同一 tick 里 `tickPosition` 用路径插值位置做碰撞检查（`player.ts:146-160`），t=now 时插值位置
+  恰好就是起点格 → 起点在新墙里 → `world blocked` → 转 `waiting` → 重新寻路 → 无限循环，位置永不更新。
+- 另一半风险是覆盖：引擎把地图**缓存在内存里**（每 ~30s 才重新 Game.load），且 `Player.join` 触发
+  `descriptionsModified` 时会把内存里的**旧地图整行写回** maps 表（`game.ts:241-246, 332-341`）——
+  裸 patch 数据库可能被悄悄冲掉。
+
+**修复 Fix**：
+`testing:patchMapCollision`（internalMutation，单事务三件事）：
+1. patch maps 行的 objectTiles（数据直接 import 自 bundle 里的 `data/gentle.js`，零参数）；
+2. 对站在新墙格里的角色 BFS 找最近空格搬过去（删 `pathfinding` 键、speed=0，避开其他角色 0.75 半径）；
+3. 若引擎在跑则 `kickEngine`——generation 校验在 saveWorld 事务任何写入**之前**执行且整体回滚
+   （`engine/abstractGame.ts:127-129, 178`），旧 action 一个字节都写不进来，零覆盖窗口、零停机。
+
+**验证 Verify**：
+- dev 执行日志：`救援 9 人：p:0:(28,22)→(28,21)，p:2:(28,13)→(27,13)，...`——9 个角色全站在新墙里；
+- 补丁后观察数分钟：`world blocked` 死循环 0 次，角色移动/对话/寻路正常；连通性单测保证无封死区域。
+
+**预防 Prevention**：
+- 一切 objmap 改动都走 `patchMapCollision`（幂等可重跑），别手动改库；也不再需要 PIT-0002 的
+  resetWorld 路线——那会换 worldId，把 jianghuEvents/episodeRecaps 时间线整个甩进历史。
+- 附带认知：救援 BFS 会把相邻受困者搬进同一条窄道，苏醒瞬间可能出现对话双方互堵、
+  日志短时间刷 `Failed to route` 的风暴，30-60 秒内由邀请/寻路超时自愈——不是卡死，无需处理。
+
+---
 
 ### PIT-0014: 多 agent 共享工作区里 git stash 会卷走别人的活
 **日期**：2026-08-27

@@ -16,6 +16,10 @@ import { fetchEmbedding } from './util/llm';
 import { chatCompletion } from './util/llm';
 import { startConversationMessage } from './agent/conversation';
 import { GameId } from './aiTown/ids';
+import * as gentleMap from '../data/gentle';
+import { blockedWithPositions } from './aiTown/movement';
+import { WorldMap } from './aiTown/worldMap';
+import { Point } from './util/types';
 
 // Clear all of the tables except for the embeddings cache.
 const excludedTables: Array<TableNames> = ['embeddingsCache'];
@@ -143,6 +147,95 @@ export const resetWorld = internalMutation({
     console.log(`Archiving world ${worldStatus.worldId}...`);
     await ctx.db.patch(worldStatus._id, { isDefault: false });
     console.log('World archived. Run "npx convex run init" to create a new world.');
+  },
+});
+
+// 一次性修复：把 bundle 里（data/gentle.js）的新 objmap 原地写入默认世界的 maps 行，
+// 不重置世界、不丢任何历史数据。同事务内完成三件事，缺一不可：
+// 1. patch objectTiles；
+// 2. 把恰好站在新墙格里的角色搬到最近空格——否则该角色会因 tickPosition 的
+//    起点碰撞检查陷入 waiting/needsPath 死循环，永久卡死；
+// 3. kick 引擎（bump generationNumber），让持有旧地图的在途 action 在下一次
+//    saveWorld 的 generation 校验处整体作废，新 action 重新 Game.load 拿到新图。
+// 幂等：重复执行只多一次无害的 kick。引擎停止时跳过 kick（kickEngine 会 throw），
+// 之后 resume→startEngine 自然会重新加载地图。
+export const patchMapCollision = internalMutation({
+  handler: async (ctx) => {
+    const { worldStatus, engine } = await getDefaultWorld(ctx.db);
+    const world = await ctx.db.get(worldStatus.worldId);
+    if (!world) throw new Error(`World ${worldStatus.worldId} not found`);
+    const mapDoc = await ctx.db
+      .query('maps')
+      .withIndex('worldId', (q) => q.eq('worldId', worldStatus.worldId))
+      .unique();
+    if (!mapDoc) throw new Error(`No map for world ${worldStatus.worldId}`);
+    if (gentleMap.mapwidth !== mapDoc.width || gentleMap.mapheight !== mapDoc.height) {
+      throw new Error(
+        `地图尺寸不一致：bundle ${gentleMap.mapwidth}×${gentleMap.mapheight}，` +
+          `DB ${mapDoc.width}×${mapDoc.height}，中止`,
+      );
+    }
+    const objectTiles = gentleMap.objmap;
+    await ctx.db.patch(mapDoc._id, { objectTiles });
+
+    const { _id, _creationTime, worldId, ...serializedMap } = mapDoc;
+    const probe = new WorldMap({ ...serializedMap, objectTiles });
+    const players = world.players.map((p) => ({ ...p }));
+    const rescued: string[] = [];
+    for (const player of players) {
+      if (blockedWithPositions(player.position, [], probe) !== 'world blocked') {
+        continue;
+      }
+      // BFS 四邻找最近空格；目标格要求同时避开其他角色（含已救援者的新位置），
+      // 防止两个受困者被搬进同一格。找不到就 throw，整个事务回滚。
+      const others = players.filter((q) => q.id !== player.id).map((q) => q.position);
+      const start = { x: Math.floor(player.position.x), y: Math.floor(player.position.y) };
+      const queue: Point[] = [start];
+      const seen = new Set([`${start.x},${start.y}`]);
+      let target: Point | null = null;
+      while (queue.length > 0) {
+        const current = queue.shift()!;
+        if (blockedWithPositions(current, others, probe) === null) {
+          target = current;
+          break;
+        }
+        for (const next of [
+          { x: current.x + 1, y: current.y },
+          { x: current.x - 1, y: current.y },
+          { x: current.x, y: current.y + 1 },
+          { x: current.x, y: current.y - 1 },
+        ]) {
+          if (next.x < 0 || next.y < 0 || next.x >= mapDoc.width || next.y >= mapDoc.height) {
+            continue;
+          }
+          const key = `${next.x},${next.y}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            queue.push(next);
+          }
+        }
+      }
+      if (!target) {
+        throw new Error(`找不到 ${player.id} 附近的空格，事务回滚`);
+      }
+      player.position = target;
+      player.speed = 0;
+      delete (player as { pathfinding?: unknown }).pathfinding;
+      rescued.push(`${player.id}:(${start.x},${start.y})→(${target.x},${target.y})`);
+    }
+    if (rescued.length > 0) {
+      await ctx.db.patch(world._id, { players });
+    }
+    if (engine.running) {
+      await kickEngine(ctx, worldStatus.worldId);
+    }
+    console.log(
+      `objectTiles 已更新为 ${objectTiles.length} 层（挡路 ${
+        objectTiles[0].flat().filter((v: number) => v !== -1).length
+      } 格）；救援 ${rescued.length} 人${rescued.length ? '：' + rescued.join('，') : ''}；kick=${
+        engine.running
+      }`,
+    );
   },
 });
 
