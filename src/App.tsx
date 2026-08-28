@@ -12,6 +12,8 @@ import { api } from '../convex/_generated/api';
 import ReactModal from 'react-modal';
 import Timeline from './components/Timeline.tsx';
 import EventBanner from './components/EventBanner.tsx';
+import EventTitleCard from './components/EventTitleCard.tsx';
+import StorytellerIntro from './components/StorytellerIntro.tsx';
 import MusicButton from './components/buttons/MusicButton.tsx';
 import Button from './components/buttons/Button.tsx';
 import InteractButton from './components/buttons/InteractButton.tsx';
@@ -46,6 +48,10 @@ function readTimelineSeenAt(): number {
 export default function Home() {
   const [helpModalOpen, setHelpModalOpen] = useState(false);
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
+  // 说书人开场是否已经演完（看完点走、或压根没得演都算）。章回题卡要等它变
+  // true 才挂载：开场遮罩和题卡叠在一起会互相抢戏，而且开场那几秒弹出来的
+  // 题卡用户根本看不见，白白消耗掉一次「只弹一次」的额度。
+  const [introDone, setIntroDone] = useState(false);
   // 已读水位线放进 state，这样点开大事记能立刻熄灭红点，不用等刷新。
   const [timelineSeenAt, setTimelineSeenAt] = useState(readTimelineSeenAt);
   const worldStatus = useQuery(api.world.defaultWorldStatus);
@@ -86,6 +92,10 @@ export default function Home() {
   // 打开大事记的所有路径（按钮、横幅）都走这里。红点的熄灭交给上面的
   // hasUnread / effect，这里只负责开框。
   const openTimeline = useCallback(() => setHistoryModalOpen(true), []);
+
+  // 必须是稳定引用：StorytellerIntro 把它放进了 effect 依赖里，每次渲染换一个
+  // 新函数会让那个 effect 白跑。
+  const finishIntro = useCallback(() => setIntroDone(true), []);
 
   return (
     <main className="relative flex min-h-screen flex-col items-center justify-between font-body game-background">
@@ -195,7 +205,26 @@ export default function Home() {
 
         <EventBanner event={latestActivity?.latestEvent} onOpenTimeline={openTimeline} />
 
-        <Game />
+        {/* 题卡要绝对定位在画布上，所以给 Game 套一层定位祖先。
+            两个 grow 都是必须的：外层 wrapper 顶替 Game 原来在这列 flex 里的
+            位置（lg 下撑满剩余高度），Game 自己的 lg:grow 则在 wrapper 内部
+            继续生效——所以 wrapper 得是 flex-col。刻意不加 min-h-0：默认的
+            min-height:auto 正是今天「不被压到 Game 的 min-h-[480px] 以下」的
+            那道保险。 */}
+        <div className="relative flex flex-col lg:grow">
+          <Game />
+          {/* 开场没演完不挂题卡（挂载时机同时也是题卡记基线的时机）。 */}
+          {introDone && (
+            <EventTitleCard
+              worldId={worldId}
+              latestEventTime={latestActivity?.latestEventTime}
+              latestEvent={latestActivity?.latestEvent}
+            />
+          )}
+        </div>
+
+        {/* 全屏 fixed 遮罩，不占布局；演完后 App 直接把它卸载。 */}
+        {!introDone && <StorytellerIntro worldId={worldId} onClose={finishIntro} />}
 
         <ToastContainer position="bottom-right" autoClose={2000} closeOnClick theme="dark" />
       </div>
