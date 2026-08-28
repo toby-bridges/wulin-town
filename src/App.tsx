@@ -6,11 +6,12 @@ import helpImg from '../assets/help.svg';
 // import { UserButton } from '@clerk/clerk-react';
 // import { Authenticated, Unauthenticated } from 'convex/react';
 // import LoginButton from './components/buttons/LoginButton.tsx';
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useQuery } from 'convex/react';
 import { api } from '../convex/_generated/api';
 import ReactModal from 'react-modal';
 import Timeline from './components/Timeline.tsx';
+import EventBanner from './components/EventBanner.tsx';
 import MusicButton from './components/buttons/MusicButton.tsx';
 import Button from './components/buttons/Button.tsx';
 import InteractButton from './components/buttons/InteractButton.tsx';
@@ -23,10 +24,69 @@ const CONFIG = {
   twitter: 'https://x.com/li9292',
 };
 
+// 「大事记」最后一次被打开的时间戳（毫秒）。用来判断有没有未读内容。
+const TIMELINE_SEEN_KEY = 'wulin:timelineSeenAt';
+
+// localStorage 在隐私模式 / 禁用站点数据的浏览器里访问就会抛错（有的甚至
+// 连读属性都抛），所以读写全部兜住：读失败一律当作"从没看过"，最差结果只是
+// 红点常亮；写失败就当这次已读没持久化，本次会话内红点仍由 state 熄灭。
+function readTimelineSeenAt(): number {
+  try {
+    const parsed = Number(localStorage.getItem(TIMELINE_SEEN_KEY));
+    // 必须 clamp 到 ≥ 0：这个值是用户可手改的。负数会让「空世界」也满足
+    // latestActivityTime(0) > seenAt(负)，红点在没有任何内容时常亮；
+    // Infinity（如手填 '1e400'）则反过来让红点永远点不亮，是无声失效。
+    // 两个方向都由这一条兜掉，NaN / null / 空串也走同一条。
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  } catch {
+    return 0;
+  }
+}
+
 export default function Home() {
   const [helpModalOpen, setHelpModalOpen] = useState(false);
   const [historyModalOpen, setHistoryModalOpen] = useState(false);
+  // 已读水位线放进 state，这样点开大事记能立刻熄灭红点，不用等刷新。
+  const [timelineSeenAt, setTimelineSeenAt] = useState(readTimelineSeenAt);
   const worldStatus = useQuery(api.world.defaultWorldStatus);
+  const worldId = worldStatus?.worldId;
+  // 整个首页只订阅这一次：横幅拿 latestEvent，红点拿两个时间戳。
+  const latestActivity = useQuery(api.director.latestActivity, worldId ? { worldId } : 'skip');
+
+  const latestActivityTime = Math.max(
+    latestActivity?.latestEventTime ?? 0,
+    latestActivity?.latestRecapTime ?? 0,
+  );
+  // 模态框开着时一律视作「正在看」，不亮红点；关掉时水位线已由下面的 effect
+  // 推到最新，所以也不会回弹。
+  const hasUnread = latestActivityTime > timelineSeenAt && !historyModalOpen;
+
+  // 已读水位线只有这一处写入（state + localStorage）。
+  //
+  // 推进时机是「模态框开着期间持续推进」，而不是「点开的那一瞬间推进一次」：
+  // 后者留了个窗口——latestActivity 还没返回时点开，那一刻 latestActivityTime
+  // 还是 0，水位线纹丝不动；等数据到达时用户其实正盯着大事记看，关掉后红点却
+  // 错亮，要再点开一次才补上。挂成 effect 后，数据什么时候到都算已读。
+  //
+  // 水位线刻意不用 Date.now()：被比较的两个时间戳都来自服务端
+  // （startTime / _creationTime），掺进本地墙钟两个方向都会坏事——
+  // 客户端时钟偏慢，红点点开也灭不掉；偏快（快过一个生成周期），
+  // 之后的新事件永远点不亮红点，(C) 直接失效。
+  // 所以水位线只在服务端时间轴上、且只单调前进。
+  useEffect(() => {
+    if (!historyModalOpen || latestActivityTime <= timelineSeenAt) return;
+    setTimelineSeenAt(latestActivityTime);
+    try {
+      localStorage.setItem(TIMELINE_SEEN_KEY, String(latestActivityTime));
+    } catch {
+      // 存不进去就算了，不影响本次会话。
+    }
+  }, [historyModalOpen, latestActivityTime, timelineSeenAt]);
+
+  // 打开大事记的所有路径（按钮、横幅）都走这里。红点的熄灭交给上面的
+  // hasUnread / effect，这里只负责开框。
+  const openTimeline = useCallback(() => setHistoryModalOpen(true), []);
+
   return (
     <main className="relative flex min-h-screen flex-col items-center justify-between font-body game-background">
       {/* 关于/联系 模态框 */}
@@ -107,13 +167,33 @@ export default function Home() {
             源码
           </Button>
           <InteractButton />
-          <Button imgUrl={starImg} onClick={() => setHistoryModalOpen(true)}>
-            大事记
-          </Button>
+          {/* 未读红点挂在按钮右上角：wrapper 只负责定位，不影响按钮本身的像素风外框。 */}
+          <div className="relative inline-flex">
+            <Button
+              imgUrl={starImg}
+              onClick={openTimeline}
+              title={hasUnread ? '大事记（有新内容）' : '大事记'}
+            >
+              大事记
+              {/* 红点是纯视觉的（aria-hidden），读屏用户靠这段 sr-only 文本
+                  拿到未读态：按钮的可访问名变成「大事记（有新内容）」。
+                  sr-only 是 position:absolute，按 flex 规范不构成 flex item，
+                  所以不会吃掉父级 gap-4 多撑出一格。 */}
+              {hasUnread && <span className="sr-only">（有新内容）</span>}
+            </Button>
+            {hasUnread && (
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute -top-1 -right-1 h-3 w-3 animate-pulse rounded-full bg-red-500"
+              />
+            )}
+          </div>
           <Button imgUrl={helpImg} onClick={() => setHelpModalOpen(true)}>
             关于
           </Button>
         </div>
+
+        <EventBanner event={latestActivity?.latestEvent} onOpenTimeline={openTimeline} />
 
         <Game />
 

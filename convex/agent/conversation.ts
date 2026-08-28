@@ -243,7 +243,7 @@ async function jianghuEventPrompt(ctx: ActionCtx, worldId: Id<'worlds'>): Promis
       '如果话题合适，请以你的性格和立场自然地聊到这件事。',
     ];
   } catch (e) {
-    console.log('[event-prompt] failed, skip:', String(e));
+    console.error('[event-prompt] failed, skip:', String(e));
     return [];
   }
 }

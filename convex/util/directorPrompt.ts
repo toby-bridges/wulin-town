@@ -31,6 +31,23 @@ export function buildDirectorPrompt(input: {
   return lines.join('\n');
 }
 
+// 回顾（recap）输出的字段是 title/body，与编剧输出的 title/description/highlights
+// 形状不同，因此单独解析而不是复用 parseDirectorOutput；容错策略保持一致。
+export function parseRecapOutput(content: string): { title: string; body: string } | null {
+  const stripped = content.replace(/```(?:json)?/gi, '').trim();
+  const match = stripped.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  try {
+    const obj = JSON.parse(match[0]) as unknown;
+    if (typeof obj !== 'object' || obj === null) return null;
+    const record = obj as Record<string, unknown>;
+    if (typeof record.title !== 'string' || typeof record.body !== 'string') return null;
+    return { title: record.title, body: record.body };
+  } catch {
+    return null;
+  }
+}
+
 export function parseDirectorOutput(
   raw: string,
 ): { title: string; description: string; highlights?: string } | null {

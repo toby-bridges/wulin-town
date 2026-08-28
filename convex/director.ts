@@ -3,7 +3,8 @@ import { internal } from './_generated/api';
 import { internalAction, internalMutation, internalQuery, query } from './_generated/server';
 import { chatCompletion } from './util/llm';
 import { sanitizeForPrompt } from './util/sanitize';
-import { buildDirectorPrompt, parseDirectorOutput } from './util/directorPrompt';
+import { sleep } from './util/sleep';
+import { buildDirectorPrompt, parseDirectorOutput, parseRecapOutput } from './util/directorPrompt';
 import { Descriptions } from '../data/characters';
 
 // 编剧上下文：默认世界 + 近期事件标题。世界不在运行则返回 null（省 token）。
@@ -83,7 +84,7 @@ export const generateEvent = internalAction({
       });
       const parsed = parseDirectorOutput(content);
       if (!parsed) {
-        console.log('[director] unparseable output, skip:', content.slice(0, 200));
+        console.error('[director] unparseable output, skip:', content.slice(0, 200));
         return;
       }
       await ctx.runMutation(internal.director.publishEvent, {
@@ -94,7 +95,7 @@ export const generateEvent = internalAction({
       });
       console.log(`[director] new event: ${parsed.title}`);
     } catch (e) {
-      console.log('[director] failed, skip this round:', String(e));
+      console.error('[director] failed, skip this round:', String(e));
     }
   },
 });
@@ -159,6 +160,12 @@ export const insertRecap = internalMutation({
   },
 });
 
+// 回顾一天只有这一次 cron 机会：一次瞬时故障（限流、截断输出、模型抽风乱说话）就是
+// 一整天的空白，所以「调用 + 解析」整体重试。下面的循环上界、"是否还有下一次"的判断
+// 与两条日志的文案全部由这两个常量推导，改动上界不会静默丢掉等待或让日志说谎。
+const RECAP_MAX_ATTEMPTS = 2;
+const RECAP_RETRY_DELAY_MS = 10_000;
+
 // 每日说书人总结。全程 fail-soft：任何失败只打日志，绝不抛错。
 export const generateRecap = internalAction({
   args: {},
@@ -179,37 +186,43 @@ export const generateRecap = internalAction({
         '今日事件：',
         ...eventLines,
       ].join('\n');
-      const { content } = await chatCompletion({
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 500,
-      });
-      // recap 输出用 title/body 字段，独立解析（不复用 parseDirectorOutput）：
-      const stripped = content.replace(/```(?:json)?/gi, '').trim();
-      const match = stripped.match(/\{[\s\S]*\}/);
-      if (!match) {
-        console.log('[recap] unparseable, skip');
-        return;
+      // chatCompletion 内部已对 429/5xx 退避重试，这层多覆盖的是解析失败与不可重试的抛错。
+      let parsed: { title: string; body: string } | null = null;
+      let lastFailure = '';
+      for (let attempt = 1; attempt <= RECAP_MAX_ATTEMPTS; attempt++) {
+        try {
+          const { content } = await chatCompletion({
+            messages: [{ role: 'user', content: prompt }],
+            max_tokens: 500,
+          });
+          parsed = parseRecapOutput(content);
+          if (parsed) break;
+          lastFailure = `unparseable output: ${content.slice(0, 200)}`;
+        } catch (e) {
+          lastFailure = String(e);
+        }
+        if (attempt < RECAP_MAX_ATTEMPTS) {
+          console.error(
+            `[recap] attempt ${attempt} failed, retrying in ${RECAP_RETRY_DELAY_MS / 1000}s:`,
+            lastFailure,
+          );
+          await sleep(RECAP_RETRY_DELAY_MS);
+        }
       }
-      const parsed = JSON.parse(match[0]) as unknown;
-      if (typeof parsed !== 'object' || parsed === null) {
-        console.log('[recap] missing fields, skip');
-        return;
-      }
-      const obj = parsed as Record<string, unknown>;
-      if (typeof obj.title !== 'string' || typeof obj.body !== 'string') {
-        console.log('[recap] missing fields, skip');
+      if (!parsed) {
+        console.error(`[recap] all ${RECAP_MAX_ATTEMPTS} attempts failed, skip:`, lastFailure);
         return;
       }
       await ctx.runMutation(internal.director.insertRecap, {
         worldId: context.worldId,
-        title: sanitizeForPrompt(obj.title, 60),
-        body: sanitizeForPrompt(obj.body, 600),
+        title: sanitizeForPrompt(parsed.title, 60),
+        body: sanitizeForPrompt(parsed.body, 600),
         day: new Date().toISOString().slice(0, 10),
         eventIds: context.events.map((e) => e._id),
       });
-      console.log(`[recap] ${obj.title}`);
+      console.log(`[recap] ${parsed.title}`);
     } catch (e) {
-      console.log('[recap] failed, skip:', String(e));
+      console.error('[recap] failed, skip:', String(e));
     }
   },
 });
@@ -222,5 +235,36 @@ export const listRecaps = query({
       .withIndex('worldDay', (q) => q.eq('worldId', args.worldId))
       .order('desc')
       .take(30);
+  },
+});
+
+// 事件横幅 + 「大事记」未读红点共用的轻量查询（Task 2 消费）。
+// 刻意做成"一个查询喂两个消费者"：横幅只要最新一条事件的正文，红点只要
+// 两张表各自最新一条的时间戳。若让它们各自去订阅 listEvents/listRecaps，
+// 首页会白白常驻两份 50/30 条的全量列表订阅——而首页只需要 3 个标量。
+export const latestActivity = query({
+  args: { worldId: v.id('worlds') },
+  handler: async (ctx, args) => {
+    // worldTime 索引是 [worldId, startTime]，order('desc') 即按 startTime 从新到旧，
+    // 与 directorContext 里取近期事件的写法一致。
+    const event = await ctx.db
+      .query('jianghuEvents')
+      .withIndex('worldTime', (q) => q.eq('worldId', args.worldId))
+      .order('desc')
+      .first();
+    // worldDay 索引是 [worldId, day]，day 是 YYYY-MM-DD，字典序即时间序；
+    // 同一天多条时由 _creationTime 兜底排序（与 listRecaps 的惯用法一致）。
+    // 红点的时间戳用 _creationTime 而非 day：day 只有天粒度，无法和事件的
+    // 毫秒级 startTime 比较。
+    const recap = await ctx.db
+      .query('episodeRecaps')
+      .withIndex('worldDay', (q) => q.eq('worldId', args.worldId))
+      .order('desc')
+      .first();
+    return {
+      latestEventTime: event ? event.startTime : null,
+      latestRecapTime: recap ? recap._creationTime : null,
+      latestEvent: event ? { title: event.title, description: event.description } : null,
+    };
   },
 });
