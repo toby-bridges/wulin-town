@@ -24,13 +24,24 @@ export const agentRememberConversation = internalAction({
     operationId: v.string(),
   },
   handler: async (ctx, args) => {
-    await rememberConversation(
-      ctx,
-      args.worldId,
-      args.agentId as GameId<'agents'>,
-      args.playerId as GameId<'players'>,
-      args.conversationId as GameId<'conversations'>,
-    );
+    try {
+      await rememberConversation(
+        ctx,
+        args.worldId,
+        args.agentId as GameId<'agents'>,
+        args.playerId as GameId<'players'>,
+        args.conversationId as GameId<'conversations'>,
+      );
+    } catch (e) {
+      // 与 agentGenerateMessage 同一个洞：这里抛出去，角色会占着操作位冻 120 秒。
+      // 不重试——丢一条记忆远好过让角色装死；下面照常发 finishRememberConversation
+      // 把操作位和 toRemember 一起清掉（那个 handler 本就是「这段处理完了」的语义）。
+      console.error(
+        `[agent] remember conversation failed for ${args.playerId} in ${args.conversationId}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
     await sleep(Math.random() * 1000);
     await ctx.runMutation(api.aiTown.main.sendInput, {
       worldId: args.worldId,
@@ -69,13 +80,39 @@ export const agentGenerateMessage = internalAction({
       default:
         assertNever(args.type);
     }
-    const text = await completionFn(
-      ctx,
-      args.worldId,
-      args.conversationId as GameId<'conversations'>,
-      args.playerId as GameId<'players'>,
-      args.otherPlayerId as GameId<'players'>,
-    );
+    let text;
+    try {
+      text = await completionFn(
+        ctx,
+        args.worldId,
+        args.conversationId as GameId<'conversations'>,
+        args.playerId as GameId<'players'>,
+        args.otherPlayerId as GameId<'players'>,
+      );
+    } catch (e) {
+      // LLM 挂了（403/429/5xx/网络超时）不能就这么抛出去：抛出去之后
+      // agentSendMessage 永不执行，agent.inProgressOperation 一直挂着，要等满
+      // ACTION_TIMEOUT(120s) 才被 Agent.tick 清掉，这 120 秒里角色完全惰性
+      // ——不动、不说、不离开对话。发一条明确的失败回执把操作位放开、对话收场。
+      //
+      // 用 console.error 而不是 console.log：生产上判断「角色是不是在装死」
+      // 全靠这一行进告警，log 级别不进多数平台的 error 告警。
+      console.error(
+        `[agent] ${args.type} message failed for ${args.playerId} in ${args.conversationId}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+      await ctx.runMutation(api.aiTown.main.sendInput, {
+        worldId: args.worldId,
+        name: 'agentAbandonMessage',
+        args: {
+          agentId: args.agentId,
+          conversationId: args.conversationId,
+          operationId: args.operationId,
+        },
+      });
+      return;
+    }
 
     await ctx.runMutation(internal.aiTown.agent.agentSendMessage, {
       worldId: args.worldId,

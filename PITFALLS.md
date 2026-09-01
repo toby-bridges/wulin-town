@@ -10,6 +10,8 @@
 
 | ID | 日期 | 标题 | 标签 | 一句话结论 |
 |---|---|---|---|---|
+| PIT-0017 | 2026-09-01 | action 里的外部调用不 try/catch，角色占着操作位冻满超时 | 引擎, llm, 可靠性 | 「操作位+超时清理」模式里超时是兜底不是常规路径，每个能抛的调用都要有显式失败回执 |
+| PIT-0016 | 2026-09-01 | 「闲置超时」读的字段全仓库只有一处写入，退化成固定会话计时器 | 引擎, 玩家, 生命周期 | 见到超时判据先 grep 它读的字段有几处写入；只有 1 处 = 它不是超时是定时炸弹 |
 | PIT-0015 | 2026-08-28 | 换碰撞数据时站在新墙格里的角色会永久卡死 | 地图, 碰撞, 引擎 | 改 objmap 必须同事务搬走受困角色并 kick 引擎（testing:patchMapCollision 已内置） |
 | PIT-0014 | 2026-08-27 | 多 agent 共享工作区里 git stash 会卷走别人的活 | git, 并行开发 | 并行开发禁用 stash/checkout--/reset，只用显式路径提交 |
 | PIT-0013 | 2026-08-27 | Convex 生成文件未提交导致干净环境构建失败 | convex, 部署, 类型 | 新增 convex 函数后必须同步提交 _generated/api.d.ts |
@@ -43,6 +45,87 @@
 ---
 
 ## 日志（新记录插在最上面）
+
+### PIT-0017: action 里的外部调用不 try/catch，角色占着操作位冻满 ACTION_TIMEOUT
+**日期**：2026-09-01
+**标签**：`引擎` `llm` `可靠性`
+
+**现象 Symptom**（生产日志实证，2026-09-01 21:05）：
+```
+Uncaught Error: Chat completion failed with code 403
+Timing out {"name":"agentGenerateMessage","operationId":"o:119875"}
+```
+角色面对面站着一动不动、不说话也不离开对话，约两分钟后才恢复。
+
+**根因 Root Cause**：
+`agentOperations.ts` 的 `agentGenerateMessage` 里 `completionFn` 调用没有 try/catch。抛出后
+`agentSendMessage` 永不执行，`agent.inProgressOperation` 就一直挂着——只能等 `Agent.tick` 在
+`ACTION_TIMEOUT` 后清理（`agent.ts:57-63`）。那期间 `startOperation` 直接 throw
+（`agent.ts:244-246`），角色对任何事都无响应。`agentRememberConversation` 同一个洞。
+
+**关键认知**：这套「抢一个操作位 → 干活 → 回执释放」的结构里，**超时是兜底，不是常规路径**。
+少写一个 catch，代价不是「这次没成功」，而是「每次失败都付满超时」。而且失败源与欠费无关：
+限流(429)、瞬时 5xx、网络抖动都会走这条路。
+
+**修复 Fix**：
+1. `completionFn` 包 try/catch，失败时 `console.error` 记一行（不是 `console.log`——生产上判断
+   「角色是不是在装死」靠它进告警）；
+2. 新增 `agentAbandonMessage` 输入（`agentInputs.ts`）：校验 operationId 防串号 → 无条件
+   `delete inProgressOperation` → 停掉这场对话（`stop` 顺带释放打字锁，对方不会卡在永不兑现的
+   「正在输入」上）。**刻意不原地重试**：'start' 分支对发起方每 tick 都会重来
+   （`agent.ts:169-171`），没有退避，LLM 持续不可用时会退化成 1 秒一次地捶 API。
+3. `agentRememberConversation` 同样包起来，复用既有的 `finishRememberConversation` 回执
+   （丢一条记忆远好过让角色装死）。
+
+**验证 Verify**：
+7 条单测覆盖回执路径（含 operationId 不匹配、无在跑操作、对话已消失三种边界）；
+dev 上借尚未结清的 AstraFlow 403 做天然故障注入，日志从 `Uncaught Error` + `Timing out`
+变为一行 `[agent] ... message failed` 后角色立刻脱身。
+
+**预防 Prevention**：
+新增任何 `startOperation` 的操作时，先问「这个 action 里哪一步会抛，抛了谁来释放操作位」。
+没有答案就别写这个操作。
+
+---
+
+### PIT-0016: 「闲置超时」读的字段全仓库只有一处写入，于是退化成固定会话计时器
+**日期**：2026-09-01
+**标签**：`引擎` `玩家` `生命周期`
+
+**现象 Symptom**：
+访客点「互动」加入后，**恰好 5 分钟必被移出小镇**，无论他在走路、聊天还是打字；正在进行的
+对话被一并掐断（`leave()` 会 `conversation.stop()`）。界面零提示，「互动」按钮悄悄弹回去。
+
+**根因 Root Cause**：
+`Player.tick` 的判据本身没错：
+```ts
+if (this.human && this.lastInput < now - HUMAN_IDLE_TOO_LONG) this.leave(game, now);
+```
+错的是 **`lastInput` 全仓库只有一处写入**——`Player.join` 内（`player.ts`）。9 个 inputHandler
+（moveTo / startConversation / startTyping / finishSendingMessage / acceptInvite / rejectInvite /
+leaveConversation / join / leave）一个都不更新它。于是这个「闲置超时」从来没有度量过闲置，
+它度量的是「加入至今」——是个伪装成 idle timeout 的固定会话计时器。
+
+**修复 Fix**：
+新增 `notePlayerActivity(players, args, now)`（`player.ts`，纯函数），挂在 `Game.handleInput`
+——**输入分发的唯一入口**。按「args 带 playerId 且该 player 是人类」判定，任何未来新增的
+inputHandler 自动生效。刻意不逐个 handler 补一行：那治得了今天，但下一个加 handler 的人必然漏。
+放在 handler 调用**之前**：handler 抛错是逐输入 catch 的（`engine/abstractGame.ts:56-64`）不回滚，
+点到墙上这类被拒操作照样是「人在动」，不该让访客因此丢掉会话。
+
+口径（用户裁定）：只认**主动操作**。页面开着但不动不算「人还在」——那需要前端心跳，是另一套机制。
+
+**验证 Verify**：
+9 条单测（含 AI 不写该字段、脏 playerId 不炸引擎、计时器只向前、真闲置仍然被踢）；
+dev 上发一个真实 `moveTo` 输入，`lastInput` 从 21:39:17 前进到 21:40:16 —— 修复前它会永远
+冻在 join 时刻。
+
+**预防 Prevention**：
+**看到任何「超时 / 过期 / 失活」判据，先 grep 它读的那个字段有几处写入。只有 1 处（就是初始化那处）
+= 这不是超时，是定时炸弹。** 这类 bug 静默得可怕：代码读起来完全正确，测试也难发现，
+因为缺陷不在判据里而在「没人喂它」。
+
+---
 
 ### PIT-0015: 换碰撞数据时，站在新墙格里的角色会永久卡死
 **日期**：2026-08-28

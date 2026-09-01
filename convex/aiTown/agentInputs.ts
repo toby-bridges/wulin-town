@@ -74,6 +74,53 @@ export const agentInputs = {
       return null;
     },
   }),
+  // LLM 生成失败后的脱身路径（缘由见 agentAbandonMessage.test.ts 顶部）。
+  // 与 agentFinishSendingMessage 的区别：不写 lastMessage（没有消息发出去），
+  // 并且主动把这场对话收场，而不是留在原地重试。
+  agentAbandonMessage: inputHandler({
+    args: {
+      agentId,
+      conversationId,
+      operationId: v.string(),
+    },
+    handler: (game, now, args) => {
+      const agentId = parseGameId('agents', args.agentId);
+      const agent = game.world.agents.get(agentId);
+      if (!agent) {
+        throw new Error(`Couldn't find agent: ${agentId}`);
+      }
+      // 防串号，与 agentFinishSendingMessage 同一套：校验必须早于任何写入。
+      // 认错了就会清掉一个仍在跑的操作，等那个操作真的回来时又清一次，
+      // 两次清空之间这个角色的行为不可预测。
+      if (
+        !agent.inProgressOperation ||
+        agent.inProgressOperation.operationId !== args.operationId
+      ) {
+        console.debug(`Agent ${agentId} wasn't generating a message ${args.operationId}`);
+        return null;
+      }
+      // 先无条件放开操作位——这是「不冻 120 秒」的全部要点。就算下面收拾对话时
+      // 出岔子，也不能把角色锁在惰性状态里。
+      delete agent.inProgressOperation;
+      const conversationId = parseGameId('conversations', args.conversationId);
+      const conversation = game.world.conversations.get(conversationId);
+      // 对话可能已被别的路径停掉（对方离开、聊够上限、访客被踢），那就没什么可收拾的。
+      if (!conversation) {
+        return null;
+      }
+      const player = game.world.players.get(agent.playerId);
+      if (!player) {
+        throw new Error(`Couldn't find player: ${agent.playerId}`);
+      }
+      // 停掉对话（stop 顺带 delete isTyping，把打字锁放开，对方不会卡在
+      // 一个永不兑现的「正在输入」上）。刻意不原地重试：'start' 分支对发起方
+      // 每 tick 都会重来（agent.ts:169-171），没有退避，LLM 持续不可用时会
+      // 退化成 1 秒一次地捶 API。让角色礼貌散场，等下一次自然搭话。
+      conversation.leave(game, now, player);
+      return null;
+    },
+  }),
+
   agentFinishSendingMessage: inputHandler({
     args: {
       agentId,

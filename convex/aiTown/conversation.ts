@@ -196,7 +196,16 @@ export class Conversation {
       const agent = [...game.world.agents.values()].find((a) => a.playerId === playerId);
       if (agent) {
         agent.lastConversation = now;
-        agent.toRemember = this.id;
+        // 一句话都没说出口的对话不进「待回忆」。两条理由：
+        // 1) 它没什么可回忆的——rememberConversation 拿到空消息列表就直接返回（memory.ts:47-49）；
+        // 2) 更要紧的是它必然连带一条报错：loadConversation 去 archivedConversations 里找
+        //    （memory.ts:159-165），而归档是 saveDiff 按「前后两版 world 的差集」写的
+        //    （game.ts:269-282）——在同一个保存窗口内建了又删的对话从未进过归档，
+        //    于是查不到、抛 `Conversation ... not found`。rejectInvite 是这条路上最早的
+        //    例子；LLM 生成失败退场（agentAbandonMessage）让它从罕见变成常见。
+        if (this.numMessages > 0) {
+          agent.toRemember = this.id;
+        }
       }
     }
     game.world.conversations.delete(this.id);

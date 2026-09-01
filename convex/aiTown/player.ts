@@ -264,6 +264,45 @@ export class Player {
   }
 }
 
+/**
+ * 把一次输入记成「这个人还在」，用于闲置踢人的计时（`Player.tick`）。
+ *
+ * 为什么挂在输入分发的唯一入口（`Game.handleInput`）而不是逐个 inputHandler 里
+ * 补一行：`lastInput` 原本只在 `Player.join` 写过一次（本文件下方），于是
+ * `Player.tick` 的闲置检查退化成「固定 5 分钟必踢」——访客不管在走路、聊天还是
+ * 打字，第 300 秒都会被删除，正在进行的对话还被 `leave()` 一并掐断。逐个 handler
+ * 补的写法治得了今天，但下一个加 inputHandler 的人必然漏掉。这里按「args 带
+ * playerId 且该 player 是人类」判定，任何新增输入自动生效。
+ *
+ * 判定口径：只认**主动操作**。页面开着但不动不算「人还在」——那需要前端定期心跳，
+ * 是另一套机制，本函数刻意不覆盖。
+ *
+ * 收一个 Map 而不是 Game/World 是为了留出可测的缝：game.ts / world.ts 会把
+ * `_generated/server.js`（ESM）拉进来，jest 当前配置加载不了。
+ */
+export function notePlayerActivity(
+  players: Map<GameId<'players'>, Player>,
+  args: object,
+  now: number,
+) {
+  const playerId = (args as { playerId?: unknown }).playerId;
+  // 不带 playerId 的输入（join、createAgent 等）与非字符串脏值都安静跳过：
+  // 这里抛错会连带打挂整个 engine step。
+  if (typeof playerId !== 'string') {
+    return;
+  }
+  const player = players.get(playerId as GameId<'players'>);
+  // AI 角色没有闲置超时（`Player.tick` 只检查 `human`），写它的字段只是无意义的
+  // 状态 churn；找不到玩家（指向已离开者的陈旧输入）同样跳过。
+  if (!player?.human) {
+    return;
+  }
+  // 只向前走：迟到的旧输入不能把计时器往回拨。
+  if (now > player.lastInput) {
+    player.lastInput = now;
+  }
+}
+
 export const playerInputs = {
   join: inputHandler({
     args: {

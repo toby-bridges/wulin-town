@@ -8,6 +8,7 @@ import {
   internalQuery,
 } from '../_generated/server';
 import { World, serializedWorld } from './world';
+import { notePlayerActivity } from './player';
 import { WorldMap, serializedWorldMap } from './worldMap';
 import { PlayerDescription, serializedPlayerDescription } from './playerDescription';
 import { Location, locationFields, playerLocation } from './location';
@@ -159,6 +160,12 @@ export class Game extends AbstractGame {
     if (!handler) {
       throw new Error(`Invalid input: ${name}`);
     }
+    // 任何带 playerId 的输入都算一次「人还在」。挂在这唯一的分发点上，新增
+    // inputHandler 不必记得补（缘由见 notePlayerActivity 的注释）。
+    //
+    // 刻意放在 handler 之前：handler 抛错是逐输入 catch 的（abstractGame.ts:56-64），
+    // 不会回滚。点到墙上这类被拒的操作照样是「人在动」，不该让访客因此丢掉会话。
+    notePlayerActivity(this.world.players, args, now);
     return handler(this, now, args as any);
   }
 
