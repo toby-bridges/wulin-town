@@ -183,7 +183,10 @@ export default function StorytellerIntro({
 
         {/* 正文可能很长（说书人一天的总结），给它自己的滚动区，
             别把按钮顶出屏幕外。 */}
-        <div className="mt-5 max-h-[40vh] overflow-y-auto whitespace-pre-wrap text-base leading-relaxed sm:text-lg">
+        {/* 用固定 rem 而非 40vh：vh 在部分内嵌/受限视口环境下会解析成 0，
+            让这个滚动容器塌成零高——滚动条轨道随之消失、没法拖动（线上实测
+            v1.2/v1.3 均可测得 maxHeight:0px 的塌陷值）。16rem 不依赖视口。 */}
+        <div className="mt-5 max-h-64 overflow-y-auto whitespace-pre-wrap text-base leading-relaxed sm:text-lg">
           {latest.body}
         </div>
 
