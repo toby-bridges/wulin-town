@@ -13,7 +13,10 @@ import ReactModal from 'react-modal';
 import Timeline from './components/Timeline.tsx';
 import EventBanner from './components/EventBanner.tsx';
 import EventTitleCard from './components/EventTitleCard.tsx';
-import StorytellerIntro from './components/StorytellerIntro.tsx';
+import StorytellerIntro, {
+  INTRO_SEEN_KEY,
+  readIntroSeenAt,
+} from './components/StorytellerIntro.tsx';
 import MusicButton from './components/buttons/MusicButton.tsx';
 import Button from './components/buttons/Button.tsx';
 import InteractButton from './components/buttons/InteractButton.tsx';
@@ -59,15 +62,19 @@ export default function Home() {
   // 整个首页只订阅这一次：横幅拿 latestEvent，红点拿两个时间戳。
   const latestActivity = useQuery(api.director.latestActivity, worldId ? { worldId } : 'skip');
 
-  const latestActivityTime = Math.max(
-    latestActivity?.latestEventTime ?? 0,
-    latestActivity?.latestRecapTime ?? 0,
-  );
+  // 单独拎出来一份：下面的 effect 要用它推进说书人开场的水位线。那条水位线
+  // 只认回顾，不能用 latestActivityTime——后者被最新事件拉高后会把「还没读过
+  // 的回顾」一起判成已读，开场从此静默跳过。
+  const latestRecapTime = latestActivity?.latestRecapTime ?? 0;
+  const latestActivityTime = Math.max(latestActivity?.latestEventTime ?? 0, latestRecapTime);
   // 模态框开着时一律视作「正在看」，不亮红点；关掉时水位线已由下面的 effect
   // 推到最新，所以也不会回弹。
   const hasUnread = latestActivityTime > timelineSeenAt && !historyModalOpen;
 
-  // 已读水位线只有这一处写入（state + localStorage）。
+  // 两条已读水位线都只在这一处写入：大事记红点的 timelineSeenAt
+  // （state + localStorage），和说书人开场的 introSeenAt（只 localStorage）。
+  // 它们同源同时机——「模态框开着 = 用户正看着大事记」——所以合在一个 effect
+  // 里，各自守各自的条件。
   //
   // 推进时机是「模态框开着期间持续推进」，而不是「点开的那一瞬间推进一次」：
   // 后者留了个窗口——latestActivity 还没返回时点开，那一刻 latestActivityTime
@@ -79,15 +86,48 @@ export default function Home() {
   // 客户端时钟偏慢，红点点开也灭不掉；偏快（快过一个生成周期），
   // 之后的新事件永远点不亮红点，(C) 直接失效。
   // 所以水位线只在服务端时间轴上、且只单调前进。
+  //
+  // 下面把原来的 `if (!historyModalOpen || 没新内容) return` 拆成了「先判模态
+  // 框、再各判各的水位线」。对红点那半是等价改写（`if (!A || B) return; X`
+  // 与 `if (!A) return; if (!B) X` 同义），只是让开场那半能独立推进：读过的
+  // 回顾要算数，不该被「红点已经是最新」这个无关条件挡住。
   useEffect(() => {
-    if (!historyModalOpen || latestActivityTime <= timelineSeenAt) return;
-    setTimelineSeenAt(latestActivityTime);
-    try {
-      localStorage.setItem(TIMELINE_SEEN_KEY, String(latestActivityTime));
-    } catch {
-      // 存不进去就算了，不影响本次会话。
+    if (!historyModalOpen) return;
+
+    // (1) 大事记红点水位线。
+    if (latestActivityTime > timelineSeenAt) {
+      setTimelineSeenAt(latestActivityTime);
+      try {
+        localStorage.setItem(TIMELINE_SEEN_KEY, String(latestActivityTime));
+      } catch {
+        // 存不进去就算了，不影响本次会话。
+      }
     }
-  }, [historyModalOpen, latestActivityTime, timelineSeenAt]);
+
+    // (2) 说书人开场水位线。补的是这条缝：长驻访客在大事记里把最新一回回顾
+    // 读完了，下次进站说书人却还要把同一回从头演一遍。回顾在大事记列表里就
+    // 是完整正文，读过就该算听过。
+    //
+    // 存的是 latestRecapTime，即那条回顾的服务端 _creationTime——与
+    // StorytellerIntro 关闭时写进去的、以及它拿来比较的
+    // `recaps[0]._creationTime` 是同一个数（两处都取 episodeRecaps 的
+    // worldDay 倒序第一条），所以两边的水位线在同一根时间轴上，语义一致。
+    //
+    // 这里只写 localStorage、不设 state，是刻意的：introSeenAt 没有对应的
+    // React state——开场只在 StorytellerIntro 挂载时读一次（那个 useState
+    // 初始值），本次会话里再改也不会、也不该让正在演的开场中途消失。这次写
+    // 入是给「下次进站」看的。
+    //
+    // 必须留在 historyModalOpen 里面：脱离这个条件就变成「只要有新回顾就算
+    // 已读」，开场功能等于被永久关掉。
+    if (latestRecapTime > readIntroSeenAt()) {
+      try {
+        localStorage.setItem(INTRO_SEEN_KEY, String(latestRecapTime));
+      } catch {
+        // 同上，存不进去顶多下次进店再听一遍开场。
+      }
+    }
+  }, [historyModalOpen, latestActivityTime, timelineSeenAt, latestRecapTime]);
 
   // 打开大事记的所有路径（按钮、横幅）都走这里。红点的熄灭交给上面的
   // hasUnread / effect，这里只负责开框。
