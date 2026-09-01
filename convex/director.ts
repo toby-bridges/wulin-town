@@ -4,7 +4,12 @@ import { internalAction, internalMutation, internalQuery, query } from './_gener
 import { chatCompletion } from './util/llm';
 import { sanitizeForPrompt } from './util/sanitize';
 import { sleep } from './util/sleep';
-import { buildDirectorPrompt, parseDirectorOutput, parseRecapOutput } from './util/directorPrompt';
+import {
+  buildDirectorPrompt,
+  buildRecapPrompt,
+  parseDirectorOutput,
+  parseRecapOutput,
+} from './util/directorPrompt';
 import { Descriptions } from '../data/characters';
 
 // 编剧上下文：默认世界 + 近期事件标题。世界不在运行则返回 null（省 token）。
@@ -100,6 +105,54 @@ export const generateEvent = internalAction({
   },
 });
 
+// 事件"新鲜期"：距上一条事件不足这么久就不补产。取 2 小时 = cron 周期（30 分）的
+// 4 倍，既保证访客进站时看到的是当天的新闻，又不会因为访客反复进出而连着催产。
+export const EVENT_STALE_MS = 2 * 60 * 60 * 1000;
+
+// 唤醒补产用：默认世界最新一条事件的 startTime（无世界或无事件则 null）。
+// 不复用 directorContext——它在世界不 running 时返回 null，而补产恰恰跑在刚
+// 唤醒的世界上；也不复用 latestActivity——它要 worldId，而 action 手里没有。
+export const latestEventStartTime = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const worldStatus = await ctx.db
+      .query('worldStatus')
+      .filter((q) => q.eq(q.field('isDefault'), true))
+      .first();
+    if (!worldStatus) return null;
+    const latest = await ctx.db
+      .query('jianghuEvents')
+      .withIndex('worldTime', (q) => q.eq('worldId', worldStatus.worldId))
+      .order('desc')
+      .first();
+    return latest ? latest.startTime : null;
+  },
+});
+
+// 访客把休眠世界唤醒时的补产钩子（挂点见 world.ts 的 heartbeatWorld）。
+// 没有访客时世界休眠，cron 编剧的"world not running"守卫就一路跳过，访客进站
+// 只能看到几天前的旧闻——这个函数负责在唤醒后补上一条。
+//
+// 幂等性：与 30 分钟 cron 撞车时，最坏结果是两条事件间隔分钟级；publishEvent 会把
+// 先前的 active 事件归档，不会出现双 active，没有一致性问题。而这里的 staleness
+// 复查（跑的时候才读最新事件时间）已经把这个窗口压到可忽略：cron 刚产过事件的
+// 世界会直接跳过补产。
+export const generateEventIfStale = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    try {
+      const latestStartTime = await ctx.runQuery(internal.director.latestEventStartTime, {});
+      if (latestStartTime !== null && Date.now() - latestStartTime < EVENT_STALE_MS) {
+        console.log('[director] fresh enough, skip replenish');
+        return;
+      }
+      await ctx.runAction(internal.director.generateEvent, {});
+    } catch (e) {
+      console.error('[director] replenish failed, skip:', String(e));
+    }
+  },
+});
+
 // 对话 prompt 注入用（Task 5 消费）
 export const activeEventForPrompt = internalQuery({
   args: { worldId: v.id('worlds') },
@@ -129,7 +182,15 @@ export const listEvents = query({
   },
 });
 
-// 剧集回顾上下文：默认世界 + 近 24 小时事件。世界不存在则返回 null。
+// 一次回顾最多取材多少条事件：低流量下断更几天再恢复时，别让积压的事件把 prompt 撑爆。
+// 取 60 而不是 30：满负荷世界（全天有访客、cron 每 30 分产一条）一天最多 48 条，
+// 30 会让健康世界天天触发截断、说书人只讲得到最近 15 小时；60 = 48 × 1.25 余量，
+// 覆盖全天最大产量还留富余，截断只在"回顾连续多日失败、backlog 堆积"的病态场景才响。
+const RECAP_MAX_EVENTS = 60;
+
+// 剧集回顾上下文：默认世界 + 自上次回顾以来的事件（按 startTime 升序）。世界不存在则返回 null。
+// 窗口从"过去 24h"改成"自上次回顾以来"：低流量下事件可能几天才产一条，固定 24h 窗口会
+// 让回顾天天判定"无事件"而空转，新事件永远等不到被说书人讲。
 export const recapContext = internalQuery({
   args: {},
   handler: async (ctx) => {
@@ -138,12 +199,38 @@ export const recapContext = internalQuery({
       .filter((q) => q.eq(q.field('isDefault'), true))
       .first();
     if (!worldStatus) return null;
-    const since = Date.now() - 24 * 60 * 60 * 1000;
-    const events = await ctx.db
-      .query('jianghuEvents')
-      .withIndex('worldTime', (q) => q.eq('worldId', worldStatus.worldId).gte('startTime', since))
+    // 一次 collect 同时喂"最新一条回顾"和"回目序号"两个用途：这张表一天最多一条，
+    // 全量扫描的量级无忧，比再发一次 order('desc').first() 更省一次读。
+    // worldDay 索引是 [worldId, day]（_creationTime 自动附在索引尾部），day 写入时
+    // 恒为当天日期，因此索引升序即时间序，末元素 === order('desc').first()，
+    // 与 latestActivity 报给前端的 latestRecapTime 是同一条记录。
+    const recaps = await ctx.db
+      .query('episodeRecaps')
+      .withIndex('worldDay', (q) => q.eq('worldId', worldStatus.worldId))
       .collect();
-    return { worldId: worldStatus.worldId, events };
+    const latestRecap = recaps[recaps.length - 1];
+    const since = latestRecap ? latestRecap._creationTime : 0;
+    // 这里必须**有界**读，不能 collect 后再截断：回顾若连续多日失败，since 就一直不
+    // 前进、backlog 无限增长，无界 collect 迟早撞上 Convex 的单次查询扫描上限 → throw
+    // → 被 generateRecap 外层 catch 吞掉 → 回顾又一次没生成 → since 还是不前进，
+    // 从此永久自锁。take(N+1) 之后这个死锁在构造上不可能发生。
+    // worldTime 索引是 [worldId, startTime]，order('desc') 取最近的 N+1 条（多取的那
+    // 一条只用来探"是否还有更多"，不进 prompt），再 reverse 成升序——说书人按时间顺序讲。
+    const recent = await ctx.db
+      .query('jianghuEvents')
+      .withIndex('worldTime', (q) => q.eq('worldId', worldStatus.worldId).gt('startTime', since))
+      .order('desc')
+      .take(RECAP_MAX_EVENTS + 1);
+    const truncated = recent.length > RECAP_MAX_EVENTS;
+    if (truncated) {
+      // 丢掉的是最旧的那些：宁可漏讲上古旧闻，也要保证最近的戏被讲到。
+      // 有界读换来的代价：只知道"多于 N 条"，给不出精确的 dropped 计数——这笔交易划算。
+      console.log(
+        `[recap] more than ${RECAP_MAX_EVENTS} events since last recap, keeping latest ${RECAP_MAX_EVENTS}`,
+      );
+    }
+    const events = recent.slice(0, RECAP_MAX_EVENTS).reverse();
+    return { worldId: worldStatus.worldId, events, episodeNumber: recaps.length + 1 };
   },
 });
 
@@ -173,19 +260,11 @@ export const generateRecap = internalAction({
     try {
       const context = await ctx.runQuery(internal.director.recapContext, {});
       if (!context || context.events.length === 0) {
-        console.log('[recap] no events in last 24h, skip');
+        console.log('[recap] no new events since last recap, skip');
         return;
       }
       const eventLines = context.events.map((e) => `- ${e.title}：${e.description}`);
-      const prompt = [
-        '你是《武林外传》的说书人。以下是同福客栈今天发生的事件，请写一段章回体"剧集回顾"。',
-        '要求：先给一个对仗的回目标题（如"第一回 邢捕头查案反被抓 佟掌柜算账倒贴钱"），',
-        '再写不超过 200 字的正文，说书人口吻，突出笑点，不虚构事件之外的大情节。',
-        '只输出 JSON：{"title": "回目标题", "body": "正文"}',
-        '',
-        '今日事件：',
-        ...eventLines,
-      ].join('\n');
+      const prompt = buildRecapPrompt(eventLines, context.episodeNumber);
       // chatCompletion 内部已对 429/5xx 退避重试，这层多覆盖的是解析失败与不可重试的抛错。
       let parsed: { title: string; body: string } | null = null;
       let lastFailure = '';

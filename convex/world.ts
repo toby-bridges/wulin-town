@@ -1,4 +1,5 @@
 import { ConvexError, v } from 'convex/values';
+import { internal } from './_generated/api';
 import { internalMutation, mutation, query } from './_generated/server';
 import { characters } from '../data/characters';
 import { insertInput } from './aiTown/insertInput';
@@ -52,6 +53,16 @@ export const heartbeatWorld = mutation({
       console.log(`Restarting inactive world ${worldStatus._id}...`);
       await ctx.db.patch(worldStatus._id, { status: 'running' });
       await startEngine(ctx, worldStatus.worldId);
+      // 访客唤醒休眠世界时补产一条江湖事件：世界休眠期间 cron 编剧一路跳过，
+      // 不补的话访客进站永远只能看到几天前的旧闻。延迟 10 秒是给访客留看开场的
+      // 时间，题卡随后弹出正好接力；是否真的产出由 generateEventIfStale 复查决定。
+      //
+      // 只挂在 inactive→running 这个翻转点上：mutation 是事务性的，并发心跳里只有
+      // 一个能提交这次翻转（其余的读集失效、OCC 重跑，重跑时看到的已是 running，
+      // 不再进这个分支），所以一次唤醒天然只调度一次补产。stoppedByDeveloper 与
+      // restartDeadWorlds 都不是"访客到达"，一律不挂。放在 startEngine 之后：
+      // startEngine 抛错则整个事务回滚，这次调度也随之作废，正是想要的行为。
+      await ctx.scheduler.runAfter(10_000, internal.director.generateEventIfStale, {});
     }
   },
 });

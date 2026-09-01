@@ -31,6 +31,22 @@ export function buildDirectorPrompt(input: {
   return lines.join('\n');
 }
 
+// 回顾 prompt 组装。回目序号由调用方注入（episodeNumber）而不是让模型自己编：
+// 每次调用都是无历史上下文的一次性对话，放任模型编号的结果是每一回都自称"第一回"。
+export function buildRecapPrompt(eventLines: string[], episodeNumber: number): string {
+  const lines = [
+    '你是《武林外传》的说书人。以下是同福客栈自上一回以来发生的事件，请写一段章回体"剧集回顾"。',
+    `这是第 ${episodeNumber} 回：回目标题必须以"第 ${episodeNumber} 回"开头，序号照抄，不要自行编号。`,
+    `要求：先给一个对仗的回目标题（如"第 ${episodeNumber} 回 邢捕头查案反被抓 佟掌柜算账倒贴钱"），`,
+    '再写不超过 200 字的正文，说书人口吻，突出笑点，不虚构事件之外的大情节。',
+    '只输出 JSON：{"title": "回目标题", "body": "正文"}',
+    '',
+    '本回事件：',
+    ...(eventLines.length ? eventLines : ['- （暂无）']),
+  ];
+  return lines.join('\n');
+}
+
 // 回顾（recap）输出的字段是 title/body，与编剧输出的 title/description/highlights
 // 形状不同，因此单独解析而不是复用 parseDirectorOutput；容错策略保持一致。
 export function parseRecapOutput(content: string): { title: string; body: string } | null {

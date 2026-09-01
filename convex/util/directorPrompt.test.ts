@@ -1,4 +1,9 @@
-import { buildDirectorPrompt, parseDirectorOutput, parseRecapOutput } from './directorPrompt';
+import {
+  buildDirectorPrompt,
+  buildRecapPrompt,
+  parseDirectorOutput,
+  parseRecapOutput,
+} from './directorPrompt';
 
 describe('buildDirectorPrompt', () => {
   test('包含世界观、人设、近期事件与 JSON 输出要求', () => {
@@ -10,6 +15,37 @@ describe('buildDirectorPrompt', () => {
     expect(p).toContain('佟湘玉');
     expect(p).toContain('六扇门年检');
     expect(p).toContain('JSON');
+  });
+});
+
+describe('buildRecapPrompt', () => {
+  test('注入回目序号：序号出现在要求与范例里，且不含硬编码的"第一回"', () => {
+    const p = buildRecapPrompt(['- 钱夫人催租：她又来了'], 12);
+    expect(p).toContain('第 12 回');
+    // 旧 prompt 里"第一回 邢捕头查案反被抓"是硬编码范例，模型照抄就每天都是第一回。
+    // 现在范例本身也带注入的序号，整段不应再出现写死的"第一回"。
+    expect(p).not.toContain('第一回');
+    expect(p).toContain('不要自行编号');
+  });
+
+  test('逐条带上事件行与 JSON 输出要求', () => {
+    const p = buildRecapPrompt(['- 钱夫人催租：她又来了', '- 厨艺比试：大嘴摩拳擦掌'], 3);
+    expect(p).toContain('- 钱夫人催租：她又来了');
+    expect(p).toContain('- 厨艺比试：大嘴摩拳擦掌');
+    expect(p).toContain('JSON');
+    expect(p).toContain('说书人');
+    // 事件按传入顺序（recapContext 给的是 startTime 升序）落进 prompt，说书人才能按时间讲。
+    expect(p.indexOf('钱夫人催租')).toBeLessThan(p.indexOf('厨艺比试'));
+  });
+
+  test('事件列表为空时不炸，仍是一段完整 prompt（占位符沿用 buildDirectorPrompt 的写法）', () => {
+    // generateRecap 在 events 为空时就 skip 了，正常走不到这里；这条守的是
+    // "别产出一个以「本回事件：」结尾、后面空空如也的残缺 prompt"。
+    const p = buildRecapPrompt([], 1);
+    expect(typeof p).toBe('string');
+    expect(p).toContain('第 1 回');
+    expect(p).toContain('（暂无）');
+    expect(p.trimEnd().endsWith('本回事件：')).toBe(false);
   });
 });
 

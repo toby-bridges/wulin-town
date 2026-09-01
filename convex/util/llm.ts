@@ -155,7 +155,11 @@ export async function chatCompletion(
   body.model = body.model ?? config.chatModel;
   const stopWords = body.stop ? (typeof body.stop === 'string' ? [body.stop] : body.stop) : [];
   if (config.stopWords) stopWords.push(...config.stopWords);
-  console.log(body);
+  // 只打紧凑摘要，不再把整个 body 塞进日志：system prompt 里带着 EverOS 注入的记忆片段
+  // （5 条 × 上千字符），每次请求打一遍会迅速吃满 Convex 的日志配额，真正排障需要的
+  // 也就是"哪个模型、几条消息、多大"这三项。出错时的响应体日志在下面的错误分支里，未动。
+  const promptChars = body.messages.reduce((sum, m) => sum + (m.content?.length ?? 0), 0);
+  console.log(`[llm] model=${body.model} messages=${body.messages.length} chars=${promptChars}`);
   const {
     result: content,
     retries,

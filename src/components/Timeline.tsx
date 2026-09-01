@@ -13,8 +13,8 @@ export default function Timeline({ worldId }: { worldId?: Id<'worlds'> }) {
   const events = useQuery(api.director.listEvents, worldId ? { worldId } : 'skip');
   const recaps = useQuery(api.director.listRecaps, worldId ? { worldId } : 'skip');
 
-  // 默认标签选择：generateRecap 每天只在 15:00 UTC 跑一次且要求过去 24h
-  // 有事件，全新世界（init --prod 刚建好）大概率暂时没有回顾。若「剧集
+  // 默认标签选择：generateRecap 每天只在 15:00 UTC 跑一次且要求自上次回顾
+  // 以来有事件，全新世界（init --prod 刚建好）大概率暂时没有回顾。若「剧集
   // 回顾」死死占着默认标签，上线首日访客点开大事记只会看到一句空话，还
   // 不知道旁边「事件流」其实有内容。
   //
